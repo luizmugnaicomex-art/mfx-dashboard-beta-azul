@@ -152,10 +152,16 @@ export default function App() {
         if (meta?.lastUpdatedTime) {
           setLastUpdatedTime(meta.lastUpdatedTime);
         }
+        if (meta?.isOnline !== undefined) {
+          setIsOnlineConnected(meta.isOnline);
+        }
       },
-      () => {
-        setIsOnlineConnected(false);
-      }
+      (online) => {
+        setIsOnlineConnected(online);
+      },
+      PROCESSOS_MFX,
+      'FUP IMPORTAÇÃO BI (REF. MFX, POs & MATERIAIS)',
+      '04/11/2026 15:40'
     );
 
     return () => {
@@ -623,8 +629,8 @@ export default function App() {
   };
 
   const handleAssignDrawbackAC = (processId: string, acId: string, ncmItem: string) => {
-    setProcessos((prev) =>
-      prev.map((p) => {
+    setProcessos((prev) => {
+      const nextList = prev.map((p) => {
         if (p.id !== processId) return p;
         const updated: ImportProcess = {
           ...p,
@@ -648,12 +654,15 @@ export default function App() {
         updated.riskReason = `Vinculado ao ${acId} (NCM ${ncmItem}) · Liberado p/ Registro DI Ômega`;
         setSelectedProcess(updated);
         return updated;
-      })
-    );
+      });
+      const nowStr = new Date().toLocaleString('pt-BR');
+      publishToCloudFirestore(nextList, sourceFileName, nowStr);
+      return nextList;
+    });
 
     addToast(
       `Drawback Vinculado: ${processId} ➔ ${acId}`,
-      `Item NCM ${ncmItem} alocado com sucesso. Carga destravada para registro de DI com suspensão tributária!`,
+      `Item NCM ${ncmItem} alocado com sucesso e sincronizado online no Firebase!`,
       'success'
     );
   };

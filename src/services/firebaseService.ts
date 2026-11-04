@@ -57,6 +57,11 @@ export function handleFirestoreError(
   return errInfo;
 }
 
+// Sanitize objects before sending to Firestore (strips `undefined` fields which Firestore rejects)
+function sanitizeForFirestore<T>(obj: T): T {
+  return JSON.parse(JSON.stringify(obj));
+}
+
 // Test initial connection
 export async function testConnection(): Promise<boolean> {
   try {
@@ -65,8 +70,10 @@ export async function testConnection(): Promise<boolean> {
   } catch (error) {
     if (error instanceof Error && error.message.includes('the client is offline')) {
       console.warn('Firestore offline: checking local connectivity');
+      return false;
     }
-    return false;
+    // Even if doc doesn't exist yet, server responded
+    return true;
   }
 }
 
@@ -119,16 +126,20 @@ export interface SyncMetaUpdate {
 
 /**
  * Real-time subscription to online Firestore dataset.
- * Listens to mfx_fup_chunks (chunked 40-50 per doc) and mfx_fup_meta/latest.
- * If offline or empty, gracefully falls back to local cache.
+ * Listens to mfx_fup_meta/latest and loads all active chunks from mfx_fup_chunks.
+ * If the cloud database has never been initialized yet, automatically seeds it
+ * with the initial dataset so all connected users and TV screens share the same data.
  */
 export function subscribeToOnlineProcessos(
   onUpdate: (processos: ImportProcess[], meta?: SyncMetaUpdate) => void,
-  onStatusChange?: (isOnline: boolean) => void
+  onStatusChange?: (isOnline: boolean) => void,
+  initialSeedProcessos?: ImportProcess[],
+  initialSourceFileName?: string,
+  initialLastUpdated?: string
 ): () => void {
   let isListening = true;
+  let hasAttemptedSeed = false;
 
-  // 1. Listen to metadata
   const unsubscribeMeta = onSnapshot(
     doc(db, 'mfx_fup_meta', 'latest'),
     async (metaSnap) => {
@@ -136,6 +147,7 @@ export function subscribeToOnlineProcessos(
 
       if (metaSnap.exists()) {
         const metaData = metaSnap.data();
+        const expectedChunks = typeof metaData.totalChunks === 'number' ? metaData.totalChunks : 999;
         onStatusChange?.(true);
 
         // Fetch chunked documents
@@ -143,11 +155,16 @@ export function subscribeToOnlineProcessos(
           const chunksSnap = await getDocs(collection(db, 'mfx_fup_chunks'));
           if (!chunksSnap.empty) {
             const allProcesses: ImportProcess[] = [];
-            const sortedDocs = chunksSnap.docs.sort((a, b) => {
-              const idxA = a.data().chunkIndex ?? 0;
-              const idxB = b.data().chunkIndex ?? 0;
-              return idxA - idxB;
-            });
+            const sortedDocs = chunksSnap.docs
+              .filter((d) => {
+                const idx = d.data().chunkIndex ?? 0;
+                return idx < expectedChunks;
+              })
+              .sort((a, b) => {
+                const idxA = a.data().chunkIndex ?? 0;
+                const idxB = b.data().chunkIndex ?? 0;
+                return idxA - idxB;
+              });
 
             sortedDocs.forEach((d) => {
               const chunkData = d.data();
@@ -199,11 +216,37 @@ export function subscribeToOnlineProcessos(
         } catch (err) {
           console.warn('Could not read individual processos:', err);
         }
+      } else if (
+        !hasAttemptedSeed &&
+        initialSeedProcessos &&
+        initialSeedProcessos.length > 0
+      ) {
+        // Cloud database is empty on first launch: automatically seed it so everyone online sees the same base
+        hasAttemptedSeed = true;
+        onStatusChange?.(true);
+        const cached = getCachedProcessos();
+        const cachedMeta = getCachedMeta();
+        const toPublish = cached && cached.length > 0 ? cached : initialSeedProcessos;
+        const fileToUse = cachedMeta?.sourceFileName || initialSourceFileName || 'FUP IMPORTAÇÃO BI (Base Online MFX)';
+        const timeToUse = cachedMeta?.lastUpdatedTime || initialLastUpdated || new Date().toLocaleString('pt-BR');
+
+        await publishToCloudFirestore(toPublish, fileToUse, timeToUse, 'Inicialização Automática MFX');
       }
     },
     (err) => {
       handleFirestoreError(err, OperationType.GET, 'mfx_fup_meta/latest');
       onStatusChange?.(false);
+
+      // Load from localStorage cache if offline
+      const cached = getCachedProcessos();
+      const cachedMeta = getCachedMeta();
+      if (cached && cached.length > 0) {
+        onUpdate(cached, {
+          sourceFileName: cachedMeta?.sourceFileName,
+          lastUpdatedTime: cachedMeta?.lastUpdatedTime,
+          isOnline: false,
+        });
+      }
     }
   );
 
@@ -215,8 +258,8 @@ export function subscribeToOnlineProcessos(
 
 /**
  * Chunked Upload Persistence to Firestore:
- * Splits processos into chunks of 45 processes per document (staying well under 1MB)
- * and writes to mfx_fup_chunks + mfx_fup_meta/latest in an atomic writeBatch.
+ * Sanitizes undefined properties, splits processos into chunks of 40 processes per document
+ * (staying well under 1MB), and writes to mfx_fup_chunks + mfx_fup_meta/latest in an atomic writeBatch.
  * Also persists local backup in localStorage.
  */
 export async function publishToCloudFirestore(
@@ -226,16 +269,18 @@ export async function publishToCloudFirestore(
   updatedBy = 'Equipe MFX Comex'
 ): Promise<{ success: boolean; count: number; error?: string }> {
   try {
-    // 1. Cache immediately to localStorage for instant local resiliency
-    saveCachedProcessos(processos, { sourceFileName, lastUpdatedTime });
+    const cleanProcessos = sanitizeForFirestore(processos);
 
-    // 2. Prepare chunking (45 items per chunk document to stay well within 1MB doc limits)
-    const CHUNK_SIZE = 45;
-    const totalChunks = Math.ceil(processos.length / CHUNK_SIZE);
+    // 1. Cache immediately to localStorage for instant local resiliency
+    saveCachedProcessos(cleanProcessos, { sourceFileName, lastUpdatedTime });
+
+    // 2. Prepare chunking (40 items per chunk document to stay well within 1MB doc limits)
+    const CHUNK_SIZE = 40;
+    const totalChunks = Math.max(1, Math.ceil(cleanProcessos.length / CHUNK_SIZE));
     const batch = writeBatch(db);
 
     for (let c = 0; c < totalChunks; c++) {
-      const chunkItems = processos.slice(c * CHUNK_SIZE, (c + 1) * CHUNK_SIZE);
+      const chunkItems = cleanProcessos.slice(c * CHUNK_SIZE, (c + 1) * CHUNK_SIZE);
       const chunkDocRef = doc(db, 'mfx_fup_chunks', `chunk_${c}`);
       batch.set(chunkDocRef, {
         chunkIndex: c,
@@ -245,28 +290,29 @@ export async function publishToCloudFirestore(
       });
     }
 
-    // 3. Write metadata document
+    // 3. Write metadata document (triggers onSnapshot across all connected users & TVs)
+    const nowIso = new Date().toISOString();
     const metaRef = doc(db, 'mfx_fup_meta', 'latest');
     batch.set(metaRef, {
-      sourceFileName,
-      lastUpdatedTime,
-      totalProcesses: processos.length,
+      sourceFileName: sourceFileName || 'FUP IMPORTAÇÃO BI.xlsx',
+      lastUpdatedTime: lastUpdatedTime || new Date().toLocaleString('pt-BR'),
+      totalProcesses: cleanProcessos.length,
       totalChunks,
       updatedBy,
-      updatedAt: new Date().toISOString(),
+      updatedAt: nowIso,
     });
 
     // Also update legacy meta doc for backward compatibility
     const legacyMetaRef = doc(db, 'meta', 'dataset');
     batch.set(legacyMetaRef, {
-      sourceFileName,
-      lastUpdatedTime,
-      totalCount: processos.length,
-      updatedAt: new Date().toISOString(),
+      sourceFileName: sourceFileName || 'FUP IMPORTAÇÃO BI.xlsx',
+      lastUpdatedTime: lastUpdatedTime || new Date().toLocaleString('pt-BR'),
+      totalCount: cleanProcessos.length,
+      updatedAt: nowIso,
     });
 
     await batch.commit();
-    return { success: true, count: processos.length };
+    return { success: true, count: cleanProcessos.length };
   } catch (error) {
     const info = handleFirestoreError(error, OperationType.WRITE, 'mfx_fup_chunks');
     return { success: false, count: 0, error: info.error };

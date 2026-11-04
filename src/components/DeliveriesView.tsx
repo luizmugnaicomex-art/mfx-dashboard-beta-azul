@@ -12,8 +12,8 @@ import {
   isImportProcessDelivered,
   exportWeekDeliveriesToCSV,
   formatDateBR,
-  parseDateSafe,
 } from '../utils/deliveryFilter';
+import { ComexTvSlidePanel } from './ComexTvSlidePanel';
 
 interface DeliveriesViewProps {
   processos: ImportProcess[];
@@ -42,12 +42,13 @@ export const DeliveriesView: React.FC<DeliveriesViewProps> = ({
 
   // Filter States
   const [showDelivered, setShowDelivered] = useState<boolean>(false); // MUST be false by default!
-  const [weekMode, setWeekMode] = useState<WeekMode>('CURRENT_WEEK');
+  const [weekMode, setWeekMode] = useState<WeekMode>('ALL');
   const [customIsoWeek, setCustomIsoWeek] = useState<string>(todayIsoWeek);
   const [weekDateField, setWeekDateField] = useState<WeekDateField>('DELIVERY_OR_ETA');
   const [filterText, setFilterText] = useState('');
   const [activePill, setActivePill] = useState<DeliveryPill>('TODOS');
   const [selectedProject, setSelectedProject] = useState<string>('ALL');
+  const [isSlidePanelOpen, setIsSlidePanelOpen] = useState<boolean>(false);
 
   // Pre-calculate Quick Week Labels for Buttons
   const currentWeekBounds = useMemo(() => getWeekBounds(referenceToday, 0), [referenceToday]);
@@ -382,8 +383,20 @@ export const DeliveriesView: React.FC<DeliveriesViewProps> = ({
             )}
           </div>
 
-          {/* Customer View Toggle & Export */}
+          {/* Customer View Toggle, Slide Panel TV & Export */}
           <div className="flex flex-wrap items-center gap-2.5 self-start lg:self-center">
+            {/* SLIDE PANEL BUTTON FOR COMEX ROOM TV */}
+            <button
+              id="open-slide-panel-btn"
+              type="button"
+              onClick={() => setIsSlidePanelOpen(true)}
+              title="Abrir Painel de Slides Rotativo para TV na Sala Comex / Teams"
+              className="px-4 py-2.5 rounded-xl text-xs sm:text-sm font-black bg-gradient-to-r from-cyan-500 via-blue-600 to-indigo-600 hover:from-cyan-400 hover:to-indigo-500 text-white transition-all shadow-lg shadow-blue-500/30 flex items-center gap-2 cursor-pointer border border-cyan-300/50 ring-2 ring-cyan-400/20"
+            >
+              <i className="fas fa-tv text-base animate-pulse"></i>
+              <span>📺 Slide Panel (TV Sala Comex)</span>
+            </button>
+
             {/* Export Weekly Schedule Button */}
             <button
               type="button"
@@ -585,8 +598,17 @@ export const DeliveriesView: React.FC<DeliveriesViewProps> = ({
             </div>
           </div>
 
-          {/* Right: Flag "Mostrar Entregues" (Desmarcada por Padrão!) */}
+          {/* Right: Slide Panel TV Trigger & Flag "Mostrar Entregues" (Desmarcada por Padrão!) */}
           <div className="flex items-center gap-3 flex-wrap">
+            <button
+              type="button"
+              onClick={() => setIsSlidePanelOpen(true)}
+              className="px-3.5 py-2 rounded-lg text-xs font-extrabold bg-slate-900 hover:bg-slate-800 dark:bg-blue-600 dark:hover:bg-blue-500 text-white shadow-xs flex items-center gap-2 cursor-pointer transition-all border border-slate-700 dark:border-blue-400"
+            >
+              <i className="fas fa-display text-cyan-400 dark:text-white"></i>
+              <span>📺 Iniciar Slide Panel (Modo TV)</span>
+            </button>
+
             <label
               htmlFor="show-delivered-flag"
               className={`inline-flex items-center gap-2.5 px-3.5 py-2 rounded-lg border cursor-pointer select-none font-semibold text-xs sm:text-sm transition-all ${
@@ -906,8 +928,32 @@ export const DeliveriesView: React.FC<DeliveriesViewProps> = ({
                     </div>
                   </div>
 
-                  {/* Project & Operational Regime */}
-                  <div className="flex items-center gap-2">
+                  {/* Project, Pending Callout & Operational Regime */}
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {!isDelivered && (
+                      <span
+                        className={`text-[11px] font-black uppercase px-2.5 py-0.5 rounded border flex items-center gap-1 ${
+                          p.cargaParadaDrawback
+                            ? 'bg-red-100 dark:bg-red-950/80 text-red-800 dark:text-red-200 border-red-300 dark:border-red-700 animate-pulse'
+                            : isAttention
+                            ? 'bg-red-50 dark:bg-red-950/60 text-red-700 dark:text-red-300 border-red-200 dark:border-red-800'
+                            : stage === 4 || stage === 5
+                            ? 'bg-amber-50 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border-amber-200 dark:border-amber-800'
+                            : 'bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800'
+                        }`}
+                      >
+                        <i className="fas fa-circle-exclamation text-[10px]"></i>
+                        {p.cargaParadaDrawback
+                          ? 'PENDENTE: DRAWBACK / AC'
+                          : isAttention
+                          ? 'PENDENTE: PRAZO VENCIDO'
+                          : stage === 4 || stage === 5
+                          ? 'PENDENTE: LIBERAÇÃO PORTO/DI'
+                          : stage === 6
+                          ? 'PENDENTE: ENTREGA FÁBRICA'
+                          : 'PENDENTE: CHEGADA / TRÂNSITO'}
+                      </span>
+                    )}
                     <span className="text-xs font-bold text-indigo-700 dark:text-indigo-400 px-2.5 py-0.5 rounded bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-200 dark:border-indigo-800">
                       Projeto: {p.projeto}
                     </span>
@@ -1093,6 +1139,29 @@ export const DeliveriesView: React.FC<DeliveriesViewProps> = ({
           })
         )}
       </div>
+
+      {/* =====================================================================
+          COMEX ROOM TV SLIDE PANEL (FULLSCREEN WORKING PANEL)
+         ===================================================================== */}
+      <ComexTvSlidePanel
+        isOpen={isSlidePanelOpen}
+        onClose={() => setIsSlidePanelOpen(false)}
+        filteredDeliveries={filteredDeliveries}
+        allProcessos={processos}
+        weekMode={weekMode}
+        setWeekMode={setWeekMode}
+        weekDateField={weekDateField}
+        setWeekDateField={setWeekDateField}
+        showDelivered={showDelivered}
+        setShowDelivered={setShowDelivered}
+        activePeriodLabel={activePeriodInfo.label}
+        activePeriodDates={activePeriodInfo.dates}
+        isOnlineSynced={isOnlineSynced}
+        lastUpdatedTime={lastUpdatedTime}
+        onSelectProcess={(proc) => {
+          onSelectProcess(proc);
+        }}
+      />
     </div>
   );
 };

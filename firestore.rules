@@ -1,0 +1,48 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-\\.\\/]+$');
+    }
+
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Individual processes collection
+    match /processos/{processoId} {
+      allow read: if true;
+      allow create, update: if isValidId(processoId)
+        && request.resource.data.id is string
+        && request.resource.data.id.size() <= 64
+        && request.resource.data.status is string
+        && request.resource.data.status.size() <= 128;
+      allow delete: if false;
+    }
+
+    // Chunked documents (40-50 processes per chunk) for ultra-fast bulk cloud loading
+    match /mfx_fup_chunks/{chunkId} {
+      allow read: if true;
+      allow write: if isValidId(chunkId)
+        && request.resource.data.chunkIndex is number;
+    }
+
+    // Metadata for tracking active workbook synchronization across all users
+    match /mfx_fup_meta/{metaId} {
+      allow read: if true;
+      allow write: if isValidId(metaId)
+        && request.resource.data.sourceFileName is string
+        && request.resource.data.sourceFileName.size() <= 256;
+    }
+
+    // Legacy metadata path
+    match /meta/{metaId} {
+      allow read: if true;
+      allow write: if isValidId(metaId)
+        && request.resource.data.sourceFileName is string
+        && request.resource.data.sourceFileName.size() <= 256;
+    }
+  }
+}

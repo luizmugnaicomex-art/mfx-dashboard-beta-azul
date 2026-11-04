@@ -20,6 +20,12 @@ import { DashboardCharts } from './components/DashboardCharts';
 import { DashboardGrid } from './components/DashboardGrid';
 import { DetailedTableView } from './components/DetailedTableView';
 import { DetailsModal } from './components/DetailsModal';
+import { DeliveriesView } from './components/DeliveriesView';
+import {
+  testConnection,
+  subscribeToOnlineProcessos,
+  publishToCloudFirestore,
+} from './services/firebaseService';
 
 const INITIAL_FILTERS: FilterState = {
   pos: [],
@@ -90,7 +96,10 @@ export default function App() {
 
   const [darkMode, setDarkMode] = useState<boolean>(false);
   const [lang, setLang] = useState<LanguageCode>('pt');
-  const [activeTab, setActiveTab] = useState<number>(1);
+  const [activeTab, setActiveTab] = useState<number>(0); // 0 = Deliveries (Customer View), 1-5 = Analytics/Operations, 6 = Master Table
+  const [isOnlineConnected, setIsOnlineConnected] = useState<boolean>(true);
+  const [isSyncingCloud, setIsSyncingCloud] = useState<boolean>(false);
+  const [presentationMode, setPresentationMode] = useState<boolean>(false);
 
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
   const [filters, setFilters] = useState<FilterState>(INITIAL_FILTERS);
@@ -123,6 +132,34 @@ export default function App() {
       setToasts((prev) => prev.filter((item) => item.id !== id));
     }, 5000);
   };
+
+  // Test Firebase connection & Subscribe to online Firestore updates
+  useEffect(() => {
+    testConnection().then((connected) => {
+      setIsOnlineConnected(connected);
+    });
+
+    const unsubscribe = subscribeToOnlineProcessos(
+      (onlineProcessos, meta) => {
+        if (onlineProcessos.length > 0) {
+          setProcessos(onlineProcessos);
+        }
+        if (meta?.sourceFileName) {
+          setSourceFileName(meta.sourceFileName);
+        }
+        if (meta?.lastUpdatedTime) {
+          setLastUpdatedTime(meta.lastUpdatedTime);
+        }
+      },
+      () => {
+        setIsOnlineConnected(false);
+      }
+    );
+
+    return () => {
+      unsubscribe();
+    };
+  }, []);
 
   // Sync dark mode class on body & html
   const toggleDarkMode = (targetDark?: boolean) => {
@@ -468,20 +505,30 @@ export default function App() {
                   }))
                 )
           );
-          setFilters(INITIAL_FILTERS);
-          setSourceFileName(`${fileName} (Abas: ${parsed.sheetNames.join(', ')})`);
+          const newFileName = `${fileName} (Abas: ${parsed.sheetNames.join(', ')})`;
+          setSourceFileName(newFileName);
           const now = new Date();
-          setLastUpdatedTime(
-            `${now.toLocaleDateString('pt-BR')} ${now.toLocaleTimeString('pt-BR', {
-              hour: '2-digit',
-              minute: '2-digit',
-            })}`
-          );
+          const newTime = `${now.toLocaleDateString('pt-BR')} ${now.toLocaleTimeString('pt-BR', {
+            hour: '2-digit',
+            minute: '2-digit',
+          })}`;
+          setLastUpdatedTime(newTime);
           addToast(
             `Arquivo ${fileName} carregado com sucesso!`,
             `${parsed.processos.length} processos (REF. MFX) e ${parsed.pedidosCount} itens/POs sincronizados.`,
             'success'
           );
+
+          // Auto-sync to Firebase Cloud Firestore so all users and clients see it online
+          publishToCloudFirestore(parsed.processos, newFileName, newTime).then((res) => {
+            if (res.success) {
+              addToast(
+                'Sincronizado Online (Firebase)',
+                `${res.count} processos enviados para a nuvem. Disponíveis em tempo real para todos os clientes!`,
+                'success'
+              );
+            }
+          });
         } else {
           addToast(
             'Planilha sem linhas válidas',
@@ -503,6 +550,31 @@ export default function App() {
     e.target.value = '';
   };
 
+  const handlePublishToFirebase = async () => {
+    setIsSyncingCloud(true);
+    const now = new Date();
+    const formattedTime = `${now.toLocaleDateString('pt-BR')} ${now.toLocaleTimeString('pt-BR', {
+      hour: '2-digit',
+      minute: '2-digit',
+    })}`;
+    const result = await publishToCloudFirestore(processos, sourceFileName, formattedTime);
+    setIsSyncingCloud(false);
+    if (result.success) {
+      setLastUpdatedTime(formattedTime);
+      addToast(
+        'Publicado na Nuvem (Firebase)!',
+        `${result.count} processos publicados online. Qualquer cliente acessando agora verá as atualizações ao vivo.`,
+        'success'
+      );
+    } else {
+      addToast(
+        'Falha na Sincronização Online',
+        result.error || 'Verifique a conexão com a internet.',
+        'warning'
+      );
+    }
+  };
+
   const handleLoadDemoData = () => {
     setProcessos(PROCESSOS_MFX);
     setPedidosForecast(PEDIDOS_FORECAST_MFX);
@@ -510,16 +582,21 @@ export default function App() {
     setFilters(INITIAL_FILTERS);
     setSourceFileName('FUP IMPORTAÇÃO BI (Dados Reais MFX — REF. MFX, POs & MATERIAIS)');
     const now = new Date();
-    setLastUpdatedTime(
-      `${now.toLocaleDateString('pt-BR')} ${now.toLocaleTimeString('pt-BR', {
-        hour: '2-digit',
-        minute: '2-digit',
-      })}`
-    );
+    const timeStr = `${now.toLocaleDateString('pt-BR')} ${now.toLocaleTimeString('pt-BR', {
+      hour: '2-digit',
+      minute: '2-digit',
+    })}`;
+    setLastUpdatedTime(timeStr);
     addToast(
       'Dados Reais MFX Carregados!',
-      `${PROCESSOS_MFX.length} processos (MFX00040/26, MFX00052/26, MFX-00001/25, MFX-00002/25 + IMP) e ${PEDIDOS_FORECAST_MFX.length} itens sincronizados.`,
+      `${PROCESSOS_MFX.length} processos (MFX00166/26, MFX00040/26, MFX00052/26, MFX-00001/25, MFX-00002/25 + IMP) sincronizados.`,
       'success'
+    );
+    // Also broadcast demo data to Firestore
+    publishToCloudFirestore(
+      PROCESSOS_MFX,
+      'FUP IMPORTAÇÃO BI (Dados Reais MFX — REF. MFX, POs & MATERIAIS)',
+      timeStr
     );
   };
 
@@ -774,15 +851,31 @@ export default function App() {
               </button>
             )}
 
-            {/* Carregar Dados Demo MFX Button */}
-            <button
-              type="button"
-              onClick={handleLoadDemoData}
-              className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-3.5 py-2 rounded-lg shadow-xs transition-colors flex items-center gap-1.5 whitespace-nowrap cursor-pointer"
-            >
-              <i className="fas fa-database"></i>
-              {t.loadDemoBtn}
-            </button>
+            {/* Sincronizar na Nuvem (Firebase) Button - Hidden in Presentation Mode */}
+            {!presentationMode && (
+              <button
+                type="button"
+                onClick={handlePublishToFirebase}
+                disabled={isSyncingCloud}
+                title="Salvar alterações online no Firebase Firestore"
+                className="bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold px-3.5 py-2 rounded-lg shadow-xs transition-colors flex items-center gap-1.5 whitespace-nowrap cursor-pointer disabled:opacity-50"
+              >
+                <i className={`fas ${isSyncingCloud ? 'fa-spinner fa-spin' : 'fa-cloud-arrow-up'}`}></i>
+                {isSyncingCloud ? 'Sincronizando...' : 'Publicar Online (Firebase)'}
+              </button>
+            )}
+
+            {/* Carregar Dados Demo MFX Button - Hidden in Presentation Mode */}
+            {!presentationMode && (
+              <button
+                type="button"
+                onClick={handleLoadDemoData}
+                className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-3.5 py-2 rounded-lg shadow-xs transition-colors flex items-center gap-1.5 whitespace-nowrap cursor-pointer"
+              >
+                <i className="fas fa-database"></i>
+                {t.loadDemoBtn}
+              </button>
+            )}
 
             {/* Exportar Excel Button */}
             <button
@@ -795,22 +888,26 @@ export default function App() {
               {t.exportExcelBtn}
             </button>
 
-            {/* Carregar XLSX Button */}
-            <label
-              htmlFor="file-upload"
-              className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold px-3.5 py-2 rounded-lg shadow-xs transition-colors flex items-center gap-1.5 whitespace-nowrap cursor-pointer"
-            >
-              <i className="fas fa-upload"></i>
-              {t.uploadXlsxBtn}
-            </label>
-            <input
-              id="file-upload"
-              ref={excelInputRef}
-              type="file"
-              accept=".xlsx,.xls,.csv"
-              onChange={handleExcelUpload}
-              className="hidden"
-            />
+            {/* Carregar XLSX Button - Hidden in Presentation Mode */}
+            {!presentationMode && (
+              <>
+                <label
+                  htmlFor="file-upload"
+                  className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold px-3.5 py-2 rounded-lg shadow-xs transition-colors flex items-center gap-1.5 whitespace-nowrap cursor-pointer"
+                >
+                  <i className="fas fa-upload"></i>
+                  {t.uploadXlsxBtn}
+                </label>
+                <input
+                  id="file-upload"
+                  ref={excelInputRef}
+                  type="file"
+                  accept=".xlsx,.xls,.csv"
+                  onChange={handleExcelUpload}
+                  className="hidden"
+                />
+              </>
+            )}
           </div>
         </div>
 
@@ -885,42 +982,44 @@ export default function App() {
       </header>
 
       {/* =====================================================================
-          MULTI-SELECT FILTER PANEL (#filter-container)
+          MULTI-SELECT FILTER PANEL (#filter-container) - Hidden on Tab 0 (Deliveries has its own dedicated search)
          ===================================================================== */}
-      <FilterPanel
-        filters={filters}
-        setFilters={setFilters}
-        onApplyFilters={() => {
-          addToast(
-            'Filtros Aplicados',
-            `Exibindo ${filteredProcessos.length} de ${processos.length} processos MFX.`,
-            'info'
-          );
-        }}
-        onClearFilters={() => {
-          setFilters(INITIAL_FILTERS);
-          addToast('Filtros Limpos', 'Todos os filtros foram redefinidos.', 'info');
-        }}
-        availablePOs={availablePOs}
-        availableBuyersProjects={availableBuyersProjects}
-        availableStatuses={availableStatuses}
-        availableModalsIncoterms={availableModalsIncoterms}
-        availableSuppliers={availableSuppliers}
-        availableAgents={availableAgents}
-        availableACs={availableACs}
-        visibleColumns={visibleColumns}
-        onToggleColumn={(colKey) =>
-          setVisibleColumns((prev) => ({ ...prev, [colKey]: !prev[colKey] }))
-        }
-        columnLabels={COLUMN_LABELS}
-        lang={lang}
-        activeFilterCount={activeFilterCount}
-        totalCount={processos.length}
-        filteredCount={filteredProcessos.length}
-      />
+      {activeTab !== 0 && (
+        <FilterPanel
+          filters={filters}
+          setFilters={setFilters}
+          onApplyFilters={() => {
+            addToast(
+              'Filtros Aplicados',
+              `Exibindo ${filteredProcessos.length} de ${processos.length} processos MFX.`,
+              'info'
+            );
+          }}
+          onClearFilters={() => {
+            setFilters(INITIAL_FILTERS);
+            addToast('Filtros Limpos', 'Todos os filtros foram redefinidos.', 'info');
+          }}
+          availablePOs={availablePOs}
+          availableBuyersProjects={availableBuyersProjects}
+          availableStatuses={availableStatuses}
+          availableModalsIncoterms={availableModalsIncoterms}
+          availableSuppliers={availableSuppliers}
+          availableAgents={availableAgents}
+          availableACs={availableACs}
+          visibleColumns={visibleColumns}
+          onToggleColumn={(colKey) =>
+            setVisibleColumns((prev) => ({ ...prev, [colKey]: !prev[colKey] }))
+          }
+          columnLabels={COLUMN_LABELS}
+          lang={lang}
+          activeFilterCount={activeFilterCount}
+          totalCount={processos.length}
+          filteredCount={filteredProcessos.length}
+        />
+      )}
 
       {/* =====================================================================
-          THE 6 VIEW TABS (#view-tabs-container)
+          THE 7 VIEW TABS (#view-tabs-container)
          ===================================================================== */}
       <nav
         id="view-tabs-container"
@@ -928,6 +1027,7 @@ export default function App() {
       >
         <div className="flex items-center space-x-2 md:space-x-6 min-w-max">
           {[
+            { id: 0, icon: 'fa-box-open', label: t.tabDeliveries, highlight: true },
             { id: 1, icon: 'fa-file-invoice', label: t.tab1 },
             { id: 2, icon: 'fa-stopwatch', label: t.tab2 },
             { id: 3, icon: 'fa-coins', label: t.tab3 },
@@ -947,8 +1047,13 @@ export default function App() {
                     : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 hover:border-gray-300'
                 }`}
               >
-                <i className={`fas ${tab.icon} mr-2`}></i>
+                <i className={`fas ${tab.icon} mr-2 ${tab.highlight ? 'text-amber-500' : ''}`}></i>
                 {tab.label}
+                {tab.highlight && (
+                  <span className="ml-1.5 px-1.5 py-0.2 rounded text-[10px] font-extrabold bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-200">
+                    Novo
+                  </span>
+                )}
               </button>
             );
           })}
@@ -958,18 +1063,34 @@ export default function App() {
       {/* =====================================================================
           3 TOP CHARTS (#charts-container) FOR TABS 1 TO 5
          ===================================================================== */}
-      <DashboardCharts
-        activeTab={activeTab}
-        processos={filteredProcessos}
-        atosConcessorios={filteredAtosConcessorios}
-        darkMode={darkMode}
-      />
+      {activeTab >= 1 && activeTab <= 5 && (
+        <DashboardCharts
+          activeTab={activeTab}
+          processos={filteredProcessos}
+          atosConcessorios={filteredAtosConcessorios}
+          darkMode={darkMode}
+        />
+      )}
 
       {/* =====================================================================
-          3-COLUMN CARDS GRID (#dashboard-grid) OR TAB 6 MASTER TABLE
+          MAIN DISPLAY: TAB 0 (DELIVERIES), TAB 6 (MASTER TABLE), OR TABS 1-5 (GRID)
          ===================================================================== */}
       <main>
-        {activeTab === 6 ? (
+        {activeTab === 0 ? (
+          <DeliveriesView
+            processos={processos}
+            onSelectProcess={(proc) => {
+              setSelectedAC(null);
+              setModalInitialTab('overview');
+              setSelectedProcess(proc);
+            }}
+            isOnlineSynced={isOnlineConnected}
+            presentationMode={presentationMode}
+            onTogglePresentationMode={() => setPresentationMode(!presentationMode)}
+            lastUpdatedTime={lastUpdatedTime}
+            sourceFileName={sourceFileName}
+          />
+        ) : activeTab === 6 ? (
           <DetailedTableView
             processos={filteredProcessos}
             pedidosForecast={pedidosForecast}

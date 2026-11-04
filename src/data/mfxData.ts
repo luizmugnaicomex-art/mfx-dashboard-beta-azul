@@ -2707,6 +2707,7 @@ export const TRANSLATIONS: Record<LanguageCode, Record<string, string>> = {
     tab4: 'Fretes, Rodoviário & Saving',
     tab5: 'Controle de Drawback (7 ACs)',
     tab6: 'Visão Detalhada (Planilha Geral)',
+    tabDeliveries: '🚚 Deliveries (Entregas)',
   },
   en: {
     mainTitle: 'MFX — COMEX & DRAWBACK DASHBOARD',
@@ -2738,6 +2739,7 @@ export const TRANSLATIONS: Record<LanguageCode, Record<string, string>> = {
     tab4: 'Intl Freight, Trucking & Saving',
     tab5: 'Drawback Control (7 ACs)',
     tab6: 'Detailed View (Master Sheet)',
+    tabDeliveries: '🚚 Deliveries (Client Tracking)',
   },
   zh: {
     mainTitle: 'MFX — 进出口与退税 (DRAWBACK) 运营看板',
@@ -2769,5 +2771,6 @@ export const TRANSLATIONS: Record<LanguageCode, Record<string, string>> = {
     tab4: '国际运费、陆运与降本',
     tab5: 'Drawback 退税控制 (7个 AC)',
     tab6: '全量明细总表 (PROCESSOS & PEDIDOS)',
+    tabDeliveries: '🚚 交付跟踪 (Deliveries)',
   },
 };

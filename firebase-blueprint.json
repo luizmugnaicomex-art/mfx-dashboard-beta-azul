@@ -1,0 +1,76 @@
+{
+  "entities": {
+    "ImportProcess": {
+      "title": "ImportProcess",
+      "description": "Represents an MFX import shipment with order, tracking, operational status, and delivery dates.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique process identifier such as MFX00040/26" },
+        "oc": { "type": "string", "description": "Purchase order or list of POs" },
+        "fornecedor": { "type": "string", "description": "Supplier or exporter name" },
+        "paisOrigem": { "type": "string", "description": "Origin country" },
+        "projeto": { "type": "string", "description": "Associated project or client" },
+        "status": { "type": "string", "description": "Normalized operational status" },
+        "statusRawExcel": { "type": "string", "description": "Exact Column A raw status from Excel" },
+        "stageNumber": { "type": "number", "description": "Process stage 1 through 7" },
+        "modal": { "type": "string", "description": "Transport mode (AÉREO, MARÍTIMO, RODOVIÁRIO)" },
+        "incoterm": { "type": "string", "description": "Incoterm" },
+        "blAwb": { "type": "string", "description": "Bill of Lading or Air Waybill number" },
+        "numeroDiDuimp": { "type": "string", "description": "Import Declaration or DUIMP number" },
+        "canal": { "type": "string", "description": "Customs clearance channel" },
+        "etd": { "type": "string", "description": "Departure date / ETD" },
+        "eta": { "type": "string", "description": "Estimated arrival date / ETA" },
+        "prazoEntregaMFX": { "type": "string", "description": "Forecast or effective delivery date" },
+        "dataEntregaMFX": { "type": "string", "description": "Delivery date when completed" },
+        "transitTimeDias": { "type": "number", "description": "Transit time in days" },
+        "transportadoraNacional": { "type": "string", "description": "Domestic trucking carrier" },
+        "vmldBRL": { "type": "number", "description": "Total landed value in BRL" },
+        "updatedAt": { "type": "string", "description": "Last updated timestamp ISO string" }
+      },
+      "required": ["id", "status"]
+    },
+    "ProcessChunk": {
+      "title": "ProcessChunk",
+      "description": "Chunk of consolidated processes for efficient quota and 1MB size-safe persistence.",
+      "type": "object",
+      "properties": {
+        "chunkIndex": { "type": "number", "description": "Index of the chunk" },
+        "items": { "type": "array", "description": "List of import processes" },
+        "updatedAt": { "type": "string", "description": "ISO timestamp" }
+      },
+      "required": ["chunkIndex", "updatedAt"]
+    },
+    "FupMeta": {
+      "title": "FupMeta",
+      "description": "Metadata about the active dataset, source file, chunk count, and sync timestamp.",
+      "type": "object",
+      "properties": {
+        "sourceFileName": { "type": "string", "description": "Uploaded or synced file name" },
+        "lastUpdatedTime": { "type": "string", "description": "Formatted timestamp of last update" },
+        "totalProcesses": { "type": "number", "description": "Total count of processes" },
+        "totalChunks": { "type": "number", "description": "Total count of chunks" },
+        "updatedBy": { "type": "string", "description": "Name or email of uploader" },
+        "updatedAt": { "type": "string", "description": "ISO timestamp of sync" }
+      },
+      "required": ["sourceFileName", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/processos/{processoId}": {
+      "schema": { "$ref": "#/entities/ImportProcess" },
+      "description": "Individual process documents for single reads and query lookups."
+    },
+    "/mfx_fup_chunks/{chunkId}": {
+      "schema": { "$ref": "#/entities/ProcessChunk" },
+      "description": "Chunk documents (40-50 processes each) for fast bulk cloud loading."
+    },
+    "/mfx_fup_meta/{metaId}": {
+      "schema": { "$ref": "#/entities/FupMeta" },
+      "description": "Global sync metadata for tracking live cloud workbook state across all users."
+    },
+    "/meta/{metaId}": {
+      "schema": { "$ref": "#/entities/FupMeta" },
+      "description": "Legacy sync metadata doc."
+    }
+  }
+}

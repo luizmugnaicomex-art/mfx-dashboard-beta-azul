@@ -32,7 +32,9 @@ export const DetailedTableView: React.FC<DetailedTableViewProps> = ({
   onSelectAC,
   onExportExcel,
 }) => {
-  const [sheetSubView, setSheetSubView] = useState<'PROCESSOS' | 'PEDIDOS' | 'ACS'>('PROCESSOS');
+  const [sheetSubView, setSheetSubView] = useState<
+    'FLAT_ITENS' | 'PROCESSOS' | 'PEDIDOS' | 'ACS'
+  >('FLAT_ITENS');
   const [showAll36Cols, setShowAll36Cols] = useState<boolean>(true);
   const [sortField, setSortField] = useState<SortField>('id');
   const [sortAsc, setSortAsc] = useState<boolean>(true);
@@ -57,8 +59,19 @@ export const DetailedTableView: React.FC<DetailedTableViewProps> = ({
       : String(valB).localeCompare(String(valA));
   });
 
+  // Derive flat item rows from filtered processos so filters apply to the flat item table too
+  const flatItemRows = sortedProcessos.flatMap((p) =>
+    p.itens.map((it) => ({
+      proc: p,
+      item: it,
+    }))
+  );
+
   const fmtBRL = (val: number) =>
     val.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 });
+
+  const fmtSymbol = (moeda: string) =>
+    moeda === 'EUR' ? '€ ' : moeda === 'BRL' ? 'R$ ' : '$ ';
 
   const renderSortIcon = (field: SortField) => {
     if (sortField !== field) return <i className="fas fa-sort text-gray-400 ml-1 text-[10px]"></i>;
@@ -76,6 +89,17 @@ export const DetailedTableView: React.FC<DetailedTableViewProps> = ({
         <div className="flex items-center gap-2 flex-wrap">
           <button
             type="button"
+            onClick={() => setSheetSubView('FLAT_ITENS')}
+            className={`px-3.5 py-1.5 rounded-md text-xs font-bold transition-colors cursor-pointer ${
+              sheetSubView === 'FLAT_ITENS'
+                ? 'bg-blue-600 text-white'
+                : 'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-200'
+            }`}
+          >
+            <i className="fas fa-table-list mr-1.5"></i>Planilha Geral MFX — Itens ({flatItemRows.length})
+          </button>
+          <button
+            type="button"
             onClick={() => setSheetSubView('PROCESSOS')}
             className={`px-3.5 py-1.5 rounded-md text-xs font-bold transition-colors cursor-pointer ${
               sheetSubView === 'PROCESSOS'
@@ -83,7 +107,7 @@ export const DetailedTableView: React.FC<DetailedTableViewProps> = ({
                 : 'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-200'
             }`}
           >
-            <i className="fas fa-ship mr-1.5"></i>Aba PROCESSOS ({processos.length})
+            <i className="fas fa-ship mr-1.5"></i>Processos Consolidados ({processos.length})
           </button>
           <button
             type="button"
@@ -94,7 +118,7 @@ export const DetailedTableView: React.FC<DetailedTableViewProps> = ({
                 : 'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-200'
             }`}
           >
-            <i className="fas fa-boxes-stacked mr-1.5"></i>Aba PEDIDOS ({pedidosForecast.length})
+            <i className="fas fa-boxes-stacked mr-1.5"></i>Forecast de POs / Pedidos ({pedidosForecast.length})
           </button>
           <button
             type="button"
@@ -105,7 +129,7 @@ export const DetailedTableView: React.FC<DetailedTableViewProps> = ({
                 : 'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-200'
             }`}
           >
-            <i className="fas fa-shield-halved mr-1.5"></i>Aba 7 Atos Concessórios ({atosConcessorios.length})
+            <i className="fas fa-shield-halved mr-1.5"></i>7 Atos Concessórios ({atosConcessorios.length})
           </button>
 
           {sheetSubView === 'PROCESSOS' && (
@@ -115,7 +139,7 @@ export const DetailedTableView: React.FC<DetailedTableViewProps> = ({
               className="px-3 py-1.5 rounded-md text-xs font-semibold border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 cursor-pointer"
             >
               <i className="fas fa-arrows-left-right mr-1.5 text-teal-600"></i>
-              {showAll36Cols ? 'Modo Completo (36 Colunas FUP)' : 'Modo Resumido'}
+              {showAll36Cols ? 'Modo Completo (36 Colunas)' : 'Modo Resumido'}
             </button>
           )}
         </div>
@@ -142,7 +166,137 @@ export const DetailedTableView: React.FC<DetailedTableViewProps> = ({
       </div>
 
       {/* ===================================================================
-          SHEET 1: ABA PROCESSOS (36 COLUMNS FROM FUP IMPORTAÇÃO BI_2.xlsx)
+          SHEET 0: PLANILHA GERAL MFX (EXACT ITEM-LEVEL FLAT TABLE COL A - U)
+         =================================================================== */}
+      {sheetSubView === 'FLAT_ITENS' && (
+        <div className="table-responsive">
+          <table className="w-full text-left border-collapse text-xs">
+            <thead className="bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-200 uppercase border-b border-gray-200 dark:border-gray-700">
+              <tr>
+                <th className="py-3 px-3 font-extrabold whitespace-nowrap">STATUS</th>
+                <th className="py-3 px-3 font-extrabold whitespace-nowrap">REF. MFX</th>
+                <th className="py-3 px-3 font-extrabold whitespace-nowrap">COMPRADOR RESPONSAVEL</th>
+                <th className="py-3 px-3 font-extrabold whitespace-nowrap">PO</th>
+                <th className="py-3 px-3 font-extrabold whitespace-nowrap">FORNECEDOR</th>
+                <th className="py-3 px-3 font-extrabold whitespace-nowrap">ORIGEM</th>
+                <th className="py-3 px-3 font-extrabold whitespace-nowrap">INVOICE</th>
+                <th className="py-3 px-3 font-extrabold whitespace-nowrap">COD. MATERIAL</th>
+                <th className="py-3 px-3 font-extrabold whitespace-nowrap">DESCRIÇÃO</th>
+                <th className="py-3 px-3 font-extrabold text-right whitespace-nowrap">QTD</th>
+                <th className="py-3 px-3 font-extrabold text-right whitespace-nowrap">
+                  VALOR UNITÁRIO
+                </th>
+                <th className="py-3 px-3 font-extrabold text-right whitespace-nowrap">
+                  VALOR TOTAL
+                </th>
+                <th className="py-3 px-3 font-extrabold whitespace-nowrap">UNIDADE DE MEDIDA</th>
+                <th className="py-3 px-3 font-extrabold whitespace-nowrap">AGENTE DE CARGAS</th>
+                <th className="py-3 px-3 font-extrabold whitespace-nowrap">BL / AWB</th>
+                <th className="py-3 px-3 font-extrabold whitespace-nowrap">INCOTERMS</th>
+                <th className="py-3 px-3 font-extrabold whitespace-nowrap">MODAL</th>
+                <th className="py-3 px-3 font-extrabold whitespace-nowrap">
+                  DATA PRONTIDÃO CARGA
+                </th>
+                <th className="py-3 px-3 font-extrabold whitespace-nowrap">ETD</th>
+                <th className="py-3 px-3 font-extrabold whitespace-nowrap">ETA</th>
+                <th className="py-3 px-3 font-extrabold text-right whitespace-nowrap">TT (DIAS)</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
+              {flatItemRows.map(({ proc, item }, idx) => {
+                const rowClass =
+                  proc.riskLevel === 'high'
+                    ? 'row-risk-high'
+                    : proc.riskLevel === 'medium'
+                    ? 'row-risk-medium'
+                    : 'hover:bg-gray-50 dark:hover:bg-gray-800/60';
+                const sym = fmtSymbol(item.moeda || proc.moeda);
+                return (
+                  <tr
+                    key={`${proc.id}-${item.id}-${idx}`}
+                    onClick={() => onSelectProcess(proc, 'overview')}
+                    className={`${rowClass} cursor-pointer transition-colors`}
+                  >
+                    <td className="py-2.5 px-3 font-bold whitespace-nowrap">
+                      {item.statusItem || proc.statusRawExcel || proc.status}
+                    </td>
+                    <td className="py-2.5 px-3 font-mono font-extrabold text-blue-700 dark:text-blue-300 whitespace-nowrap">
+                      {proc.id}
+                    </td>
+                    <td className="py-2.5 px-3 font-bold whitespace-nowrap">
+                      {item.compradorResponsavel || proc.compradorResponsavel || 'EUDE'}
+                    </td>
+                    <td className="py-2.5 px-3 font-mono font-semibold whitespace-nowrap">
+                      {item.oc || proc.oc}
+                    </td>
+                    <td className="py-2.5 px-3 font-bold whitespace-nowrap">
+                      {item.fornecedor || proc.fornecedor}
+                    </td>
+                    <td className="py-2.5 px-3 font-semibold whitespace-nowrap">
+                      {item.origem || proc.paisOrigem}
+                    </td>
+                    <td className="py-2.5 px-3 font-mono whitespace-nowrap">
+                      {item.invoice || proc.commercialInvoice}
+                    </td>
+                    <td className="py-2.5 px-3 font-mono font-bold text-indigo-700 dark:text-indigo-300 whitespace-nowrap">
+                      {item.codigoItem}
+                    </td>
+                    <td className="py-2.5 px-3 font-medium whitespace-nowrap">{item.descricao}</td>
+                    <td className="py-2.5 px-3 text-right font-mono font-bold whitespace-nowrap tabular-nums">
+                      {item.quantidade.toLocaleString('pt-BR')}
+                    </td>
+                    <td className="py-2.5 px-3 text-right font-mono whitespace-nowrap tabular-nums">
+                      {sym}
+                      {item.valorUnitarioMoeda.toLocaleString('pt-BR', {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })}
+                    </td>
+                    <td className="py-2.5 px-3 text-right font-mono font-bold whitespace-nowrap tabular-nums">
+                      {sym}
+                      {item.valorTotalMoeda.toLocaleString('pt-BR', {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })}
+                    </td>
+                    <td className="py-2.5 px-3 font-mono font-semibold whitespace-nowrap">
+                      {item.unidade}
+                    </td>
+                    <td className="py-2.5 px-3 font-bold whitespace-nowrap">{proc.agenteCarga}</td>
+                    <td className="py-2.5 px-3 font-mono font-semibold whitespace-nowrap">
+                      {proc.blAwb}
+                    </td>
+                    <td className="py-2.5 px-3 font-mono whitespace-nowrap">{proc.incoterm}</td>
+                    <td className="py-2.5 px-3 whitespace-nowrap">
+                      <i
+                        className={`fas ${
+                          proc.modal === 'AÉREO' ? 'fa-plane text-sky-600' : 'fa-ship text-blue-600'
+                        } mr-1`}
+                      ></i>
+                      {proc.modal}
+                    </td>
+                    <td className="py-2.5 px-3 font-mono whitespace-nowrap tabular-nums">
+                      {item.previsaoProntidaoCarga || proc.dataProntidaoCarga}
+                    </td>
+                    <td className="py-2.5 px-3 font-mono whitespace-nowrap tabular-nums">
+                      {item.etd || proc.etd}
+                    </td>
+                    <td className="py-2.5 px-3 font-mono font-semibold whitespace-nowrap tabular-nums">
+                      {item.eta || proc.eta}
+                    </td>
+                    <td className="py-2.5 px-3 text-right font-mono font-bold whitespace-nowrap tabular-nums">
+                      {proc.transitTimeDias}d
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* ===================================================================
+          SHEET 1: ABA PROCESSOS CONSOLIDADOS (36 COLUMNS)
          =================================================================== */}
       {sheetSubView === 'PROCESSOS' && (
         <div className="table-responsive">
@@ -154,7 +308,7 @@ export const DetailedTableView: React.FC<DetailedTableViewProps> = ({
                     onClick={() => handleSort('projeto')}
                     className="sortable-header py-3 px-3 font-extrabold whitespace-nowrap"
                   >
-                    PROJETO {renderSortIcon('projeto')}
+                    PROJETO / COMP. {renderSortIcon('projeto')}
                   </th>
                 )}
                 {visibleColumns.processo && (
@@ -162,7 +316,7 @@ export const DetailedTableView: React.FC<DetailedTableViewProps> = ({
                     onClick={() => handleSort('id')}
                     className="sortable-header py-3 px-3 font-extrabold whitespace-nowrap"
                   >
-                    PROCESSO {renderSortIcon('id')}
+                    REF. MFX / PROCESSO {renderSortIcon('id')}
                   </th>
                 )}
                 {visibleColumns.fornecedor && (
@@ -170,11 +324,11 @@ export const DetailedTableView: React.FC<DetailedTableViewProps> = ({
                     onClick={() => handleSort('fornecedor')}
                     className="sortable-header py-3 px-3 font-extrabold whitespace-nowrap"
                   >
-                    EXPORTADOR {renderSortIcon('fornecedor')}
+                    FORNECEDOR (ORIGEM) {renderSortIcon('fornecedor')}
                   </th>
                 )}
                 {showAll36Cols && (
-                  <th className="py-3 px-3 font-extrabold whitespace-nowrap">FATURA</th>
+                  <th className="py-3 px-3 font-extrabold whitespace-nowrap">INVOICE / FATURA</th>
                 )}
                 {showAll36Cols && (
                   <th className="py-3 px-3 font-extrabold whitespace-nowrap">DATA DE VENCIMENTO</th>
@@ -184,7 +338,7 @@ export const DetailedTableView: React.FC<DetailedTableViewProps> = ({
                     onClick={() => handleSort('oc')}
                     className="sortable-header py-3 px-3 font-extrabold whitespace-nowrap"
                   >
-                    OC {renderSortIcon('oc')}
+                    PO / OC {renderSortIcon('oc')}
                   </th>
                 )}
                 {visibleColumns.modal && (
@@ -231,18 +385,20 @@ export const DetailedTableView: React.FC<DetailedTableViewProps> = ({
                   </th>
                 )}
                 {showAll36Cols && (
-                  <th className="py-3 px-3 font-extrabold whitespace-nowrap">AGENTE DE CARGA</th>
+                  <>
+                    <th className="py-3 px-3 font-extrabold whitespace-nowrap">AGENTE DE CARGAS</th>
+                    <th className="py-3 px-3 font-extrabold whitespace-nowrap">BL / AWB</th>
+                  </>
                 )}
                 {visibleColumns.eta && (
                   <>
-                    <th className="py-3 px-3 font-extrabold whitespace-nowrap">EMBARQUE</th>
+                    <th className="py-3 px-3 font-extrabold whitespace-nowrap">ETD / EMBARQUE</th>
                     <th
                       onClick={() => handleSort('eta')}
                       className="sortable-header py-3 px-3 font-extrabold whitespace-nowrap"
                     >
-                      PREVISÃO CHEGADA {renderSortIcon('eta')}
+                      ETA / CHEGADA {renderSortIcon('eta')}
                     </th>
-                    <th className="py-3 px-3 font-extrabold whitespace-nowrap">CHEGADA</th>
                     <th
                       onClick={() => handleSort('transitTimeDias')}
                       className="sortable-header py-3 px-3 font-extrabold text-right whitespace-nowrap"
@@ -309,7 +465,14 @@ export const DetailedTableView: React.FC<DetailedTableViewProps> = ({
                     className={`${rowClass} cursor-pointer transition-colors`}
                   >
                     {visibleColumns.projeto && (
-                      <td className="py-2.5 px-3 font-bold whitespace-nowrap">{p.projeto}</td>
+                      <td className="py-2.5 px-3 whitespace-nowrap">
+                        <div className="font-bold">{p.projeto}</div>
+                        {p.compradorResponsavel && (
+                          <div className="text-[11px] font-mono text-gray-500">
+                            Comp: {p.compradorResponsavel}
+                          </div>
+                        )}
+                      </td>
                     )}
                     {visibleColumns.processo && (
                       <td className="py-2.5 px-3 font-mono font-extrabold text-blue-700 dark:text-blue-300 whitespace-nowrap">
@@ -317,7 +480,10 @@ export const DetailedTableView: React.FC<DetailedTableViewProps> = ({
                       </td>
                     )}
                     {visibleColumns.fornecedor && (
-                      <td className="py-2.5 px-3 font-bold whitespace-nowrap">{p.fornecedor}</td>
+                      <td className="py-2.5 px-3 whitespace-nowrap">
+                        <span className="font-bold">{p.fornecedor}</span>{' '}
+                        <span className="text-[11px] text-gray-500">({p.paisOrigem})</span>
+                      </td>
                     )}
                     {showAll36Cols && (
                       <td className="py-2.5 px-3 font-mono whitespace-nowrap">
@@ -354,10 +520,12 @@ export const DetailedTableView: React.FC<DetailedTableViewProps> = ({
                           {p.moeda}
                         </td>
                         <td className="py-2.5 px-3 text-right font-mono whitespace-nowrap tabular-nums">
-                          {p.valorFOBMoeda.toLocaleString('pt-BR')}
+                          {p.valorFOBMoeda.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                         </td>
                         <td className="py-2.5 px-3 text-right font-mono whitespace-nowrap tabular-nums">
-                          {(p.valorVMLDMoeda ?? p.valorFOBMoeda).toLocaleString('pt-BR')}
+                          {(p.valorVMLDMoeda ?? p.valorFOBMoeda).toLocaleString('pt-BR', {
+                            minimumFractionDigits: 2,
+                          })}
                         </td>
                       </>
                     )}
@@ -382,7 +550,12 @@ export const DetailedTableView: React.FC<DetailedTableViewProps> = ({
                       </td>
                     )}
                     {showAll36Cols && (
-                      <td className="py-2.5 px-3 font-bold whitespace-nowrap">{p.agenteCarga}</td>
+                      <>
+                        <td className="py-2.5 px-3 font-bold whitespace-nowrap">{p.agenteCarga}</td>
+                        <td className="py-2.5 px-3 font-mono font-semibold whitespace-nowrap">
+                          {p.blAwb}
+                        </td>
+                      </>
                     )}
                     {visibleColumns.eta && (
                       <>
@@ -391,9 +564,6 @@ export const DetailedTableView: React.FC<DetailedTableViewProps> = ({
                         </td>
                         <td className="py-2.5 px-3 font-mono font-semibold whitespace-nowrap tabular-nums">
                           {p.eta}
-                        </td>
-                        <td className="py-2.5 px-3 font-mono whitespace-nowrap tabular-nums">
-                          {p.dataChegadaEfetiva || '-'}
                         </td>
                         <td className="py-2.5 px-3 text-right font-mono font-bold whitespace-nowrap tabular-nums">
                           {p.transitTimeDias}d
@@ -505,22 +675,24 @@ export const DetailedTableView: React.FC<DetailedTableViewProps> = ({
       )}
 
       {/* ===================================================================
-          SHEET 2: ABA PEDIDOS (EXACT COLUMNS FROM FUP IMPORTAÇÃO BI_2.xlsx)
+          SHEET 2: ABA PEDIDOS / POs CONSOLIDADOS
          =================================================================== */}
       {sheetSubView === 'PEDIDOS' && (
         <div className="table-responsive">
           <table className="w-full text-left border-collapse text-xs">
             <thead className="bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-200 uppercase border-b border-gray-200 dark:border-gray-700">
               <tr>
-                <th className="py-3 px-3 font-extrabold">PROJETO</th>
-                <th className="py-3 px-3 font-extrabold">PROCESSO</th>
+                <th className="py-3 px-3 font-extrabold">PO / OC</th>
+                <th className="py-3 px-3 font-extrabold">REF. MFX</th>
+                <th className="py-3 px-3 font-extrabold">COMPRADOR</th>
                 <th className="py-3 px-3 font-extrabold">FORNECEDOR</th>
-                <th className="py-3 px-3 font-extrabold">OC</th>
-                <th className="py-3 px-3 font-extrabold">EMISSÃO OC</th>
+                <th className="py-3 px-3 font-extrabold">COD. MATERIAL</th>
+                <th className="py-3 px-3 font-extrabold">DESCRIÇÃO</th>
+                <th className="py-3 px-3 font-extrabold text-right">QTD</th>
                 <th className="py-3 px-3 font-extrabold">INCOTERM</th>
-                <th className="py-3 px-3 font-extrabold text-right">VALOR</th>
+                <th className="py-3 px-3 font-extrabold text-right">VALOR TOTAL</th>
                 <th className="py-3 px-3 font-extrabold">MOEDA</th>
-                <th className="py-3 px-3 font-extrabold">PRONTIDÃO DA CARGA</th>
+                <th className="py-3 px-3 font-extrabold">PRONTIDÃO CARGA</th>
                 <th className="py-3 px-3 font-extrabold">STATUS</th>
               </tr>
             </thead>
@@ -543,13 +715,25 @@ export const DetailedTableView: React.FC<DetailedTableViewProps> = ({
                         : 'hover:bg-gray-50 dark:hover:bg-gray-800/60'
                     } cursor-pointer`}
                   >
-                    <td className="py-2.5 px-3 font-bold">{pf.projeto}</td>
+                    <td className="py-2.5 px-3 font-mono font-bold text-indigo-700 dark:text-indigo-300">
+                      {pf.oc}
+                    </td>
                     <td className="py-2.5 px-3 font-mono font-bold text-blue-600 dark:text-blue-400">
                       {pf.processo}
                     </td>
+                    <td className="py-2.5 px-3 font-semibold">
+                      {pf.compradorResponsavel || 'EUDE'}
+                    </td>
                     <td className="py-2.5 px-3 font-bold">{pf.fornecedor}</td>
-                    <td className="py-2.5 px-3 font-mono font-semibold">{pf.oc}</td>
-                    <td className="py-2.5 px-3 font-mono tabular-nums">{pf.emissaoOC}</td>
+                    <td className="py-2.5 px-3 font-mono font-semibold">
+                      {pf.codMaterial || `OC-${pf.oc}`}
+                    </td>
+                    <td className="py-2.5 px-3 font-medium">
+                      {pf.descricao || `Pedido ${pf.oc} — ${pf.fornecedor}`}
+                    </td>
+                    <td className="py-2.5 px-3 text-right font-mono font-bold tabular-nums">
+                      {(pf.qtd || 1).toLocaleString('pt-BR')} {pf.unidadeMedida || ''}
+                    </td>
                     <td className="py-2.5 px-3 font-mono">{pf.incoterm}</td>
                     <td className="py-2.5 px-3 text-right font-mono font-bold tabular-nums">
                       {pf.valor.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}

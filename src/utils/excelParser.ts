@@ -3,6 +3,7 @@ import {
   ImportProcess,
   PedidoItem,
   PedidoForecastRow,
+  MfxRawItemRow,
   AtoConcessorio,
   PtaxRates,
   RiskLevel,
@@ -11,7 +12,7 @@ import {
 } from '../types/mfx';
 
 // ============================================================================
-// A. HEADER NORMALIZATION, CLEAN NUMBER & EXCEL DATE HELPERS
+// A. HEADER NORMALIZATION, CURRENCY DETECTION, CLEAN NUMBER & EXCEL DATE HELPERS
 // ============================================================================
 
 export function normalizeHeader(str: any): string {
@@ -31,14 +32,20 @@ export function cleanNumber(val: any): number {
   if (val === null || val === undefined || val === '') return 0;
   if (typeof val === 'number') return isNaN(val) ? 0 : val;
   const s = String(val).trim();
-  if (s.startsWith('#') || s === '-' || s.toUpperCase() === 'N/A' || s.toUpperCase() === 'ISENTO') {
+  if (
+    s.startsWith('#') ||
+    s === '-' ||
+    s.toUpperCase() === 'N/A' ||
+    s.toUpperCase() === 'ISENTO' ||
+    s.toUpperCase() === 'AGUARDANDO'
+  ) {
     return 0; // Ignore #VALUE!, #N/A, #REF!
   }
-  // Handle Brazilian & US number formats safely
+  // Remove currency symbols and letters, keeping digits, dots, commas, and minus sign
   const cleaned = s.replace(/[R$\sUSD€¥%a-zA-Z]/gi, '').trim();
   if (!cleaned) return 0;
   if (cleaned.includes(',') && cleaned.includes('.')) {
-    // e.g. 1.234,56 vs 1,234.56
+    // e.g. 1.081,41 (BR/EU) vs 1,081.41 (US)
     if (cleaned.lastIndexOf(',') > cleaned.lastIndexOf('.')) {
       return parseFloat(cleaned.replace(/\./g, '').replace(',', '.')) || 0;
     } else {
@@ -47,6 +54,21 @@ export function cleanNumber(val: any): number {
   }
   if (cleaned.includes(',')) return parseFloat(cleaned.replace(',', '.')) || 0;
   return parseFloat(cleaned) || 0;
+}
+
+export function detectCurrencyAndCleanValue(
+  rawVal: any,
+  formattedStr?: any
+): { value: number; currency: CurrencyCode | null } {
+  const s = String(formattedStr || rawVal || '').trim();
+  let currency: CurrencyCode | null = null;
+  if (s.includes('€') || /\bEUR\b/i.test(s)) currency = 'EUR';
+  else if (s.includes('R$') || /\bBRL\b/i.test(s)) currency = 'BRL';
+  else if (s.includes('¥') || /\bCNY\b|\bRMB\b/i.test(s)) currency = 'CNY';
+  else if (s.includes('$') || /\bUSD\b|\bUS\$\b/i.test(s)) currency = 'USD';
+
+  const value = cleanNumber(typeof rawVal === 'number' ? rawVal : s);
+  return { value, currency };
 }
 
 export function parseExcelDate(val: any): Date | null {
@@ -60,7 +82,13 @@ export function parseExcelDate(val: any): Date | null {
     return new Date(utcDays * 86400 * 1000);
   }
   const str = String(val).trim();
-  if (!str || str === '-' || str.toUpperCase() === 'N/A' || str.toUpperCase() === 'AGUARDANDO') {
+  if (
+    !str ||
+    str === '-' ||
+    str.toUpperCase() === 'N/A' ||
+    str.toUpperCase() === 'AGUARDANDO' ||
+    str.toUpperCase() === 'A CONFIRMAR'
+  ) {
     return null;
   }
   // Check numeric string that is an Excel serial number (e.g. "46050")
@@ -76,13 +104,20 @@ export function parseExcelDate(val: any): Date | null {
     const [y, m, d] = str.substring(0, 10).split('-').map(Number);
     return new Date(Date.UTC(y, m - 1, d));
   }
-  // Match DD/MM/YYYY or DD/MM/YY
+  // Match DD/MM/YYYY or DD/MM/YY or MM/DD/YY
   const dmy = str.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
   if (dmy) {
-    const d = Number(dmy[1]);
-    const m = Number(dmy[2]);
+    let p1 = Number(dmy[1]);
+    let p2 = Number(dmy[2]);
     const y = dmy[3].length === 2 ? Number(`20${dmy[3]}`) : Number(dmy[3]);
-    return new Date(Date.UTC(y, m - 1, d));
+    // In Brazilian Excel, DD/MM/YYYY is standard; if p2 > 12 and p1 <= 12, swap
+    let day = p1;
+    let month = p2;
+    if (month > 12 && day <= 12) {
+      day = p2;
+      month = p1;
+    }
+    return new Date(Date.UTC(y, month - 1, day));
   }
   const d = new Date(str);
   return isNaN(d.getTime()) ? null : d;
@@ -97,6 +132,15 @@ export function formatDateISO(val: any, fallback = ''): string {
   return `${year}-${month}-${day}`;
 }
 
+export function formatDateBR(val: any, fallback = ''): string {
+  const d = parseExcelDate(val);
+  if (!d) return fallback;
+  const year = d.getUTCFullYear();
+  const month = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(d.getUTCDate()).padStart(2, '0');
+  return `${day}/${month}/${year}`;
+}
+
 export function diffDaysBetween(dateEndVal: any, dateStartVal: any, fallback = 0): number {
   const dEnd = parseExcelDate(dateEndVal);
   const dStart = parseExcelDate(dateStartVal);
@@ -106,86 +150,197 @@ export function diffDaysBetween(dateEndVal: any, dateStartVal: any, fallback = 0
 }
 
 // ============================================================================
-// B. FLEXIBLE DICTIONARY LOOKUP BY NORMALIZED HEADER
+// B. FLEXIBLE DICTIONARY LOOKUP BY NORMALIZED HEADER OR COLUMN INDEX
 // ============================================================================
 
-function getCell(rowDict: Record<string, any>, candidates: string[], fallback: any = ''): any {
+interface ExtractedRow {
+  raw: Record<string, any>;
+  fmt: Record<string, string>;
+  rawCols: any[];
+  fmtCols: string[];
+}
+
+function getField(
+  row: ExtractedRow,
+  candidates: string[],
+  fallback: any = '',
+  fallbackColIndex?: number
+): { raw: any; fmt: string } {
+  const rawDict = row.raw;
+  const fmtDict = row.fmt;
+
   // 1. Exact match on normalizeHeader
   for (const cand of candidates) {
     const normCand = normalizeHeader(cand);
     if (
-      rowDict[normCand] !== undefined &&
-      rowDict[normCand] !== null &&
-      String(rowDict[normCand]).trim() !== ''
+      rawDict[normCand] !== undefined &&
+      rawDict[normCand] !== null &&
+      String(rawDict[normCand]).trim() !== ''
     ) {
-      return rowDict[normCand];
+      return { raw: rawDict[normCand], fmt: fmtDict[normCand] || String(rawDict[normCand]) };
     }
   }
+
   // 2. Accent-stripped match
-  const accentStrippedMap: Record<string, any> = {};
-  for (const k of Object.keys(rowDict)) {
-    accentStrippedMap[stripAccents(k)] = rowDict[k];
+  const accentStrippedKeyMap: Record<string, string> = {};
+  for (const k of Object.keys(rawDict)) {
+    accentStrippedKeyMap[stripAccents(k)] = k;
   }
+
   for (const cand of candidates) {
     const strippedCand = stripAccents(normalizeHeader(cand));
+    const origKey = accentStrippedKeyMap[strippedCand];
     if (
-      accentStrippedMap[strippedCand] !== undefined &&
-      accentStrippedMap[strippedCand] !== null &&
-      String(accentStrippedMap[strippedCand]).trim() !== ''
+      origKey &&
+      rawDict[origKey] !== undefined &&
+      rawDict[origKey] !== null &&
+      String(rawDict[origKey]).trim() !== ''
     ) {
-      return accentStrippedMap[strippedCand];
+      return { raw: rawDict[origKey], fmt: fmtDict[origKey] || String(rawDict[origKey]) };
     }
-    // 3. Partial substring match
-    const partialKey = Object.keys(accentStrippedMap).find((k) => k.includes(strippedCand));
-    if (
-      partialKey &&
-      accentStrippedMap[partialKey] !== undefined &&
-      String(accentStrippedMap[partialKey]).trim() !== ''
-    ) {
-      return accentStrippedMap[partialKey];
+
+    // 3. Partial substring match (only for candidate strings >= 4 chars so 'PO' or 'DI' don't false-match)
+    if (strippedCand.length >= 4) {
+      const partialStripKey = Object.keys(accentStrippedKeyMap).find((k) =>
+        k.includes(strippedCand)
+      );
+      if (partialStripKey) {
+        const realKey = accentStrippedKeyMap[partialStripKey];
+        if (
+          realKey &&
+          rawDict[realKey] !== undefined &&
+          String(rawDict[realKey]).trim() !== ''
+        ) {
+          return { raw: rawDict[realKey], fmt: fmtDict[realKey] || String(rawDict[realKey]) };
+        }
+      }
     }
   }
+
+  // 4. Optional positional column fallback (e.g., Col I = index 8 if header is blank)
+  if (
+    fallbackColIndex !== undefined &&
+    row.rawCols[fallbackColIndex] !== undefined &&
+    String(row.rawCols[fallbackColIndex]).trim() !== ''
+  ) {
+    return {
+      raw: row.rawCols[fallbackColIndex],
+      fmt: row.fmtCols[fallbackColIndex] || String(row.rawCols[fallbackColIndex]),
+    };
+  }
+
+  return { raw: fallback, fmt: String(fallback ?? '') };
+}
+
+function getCell(
+  row: ExtractedRow,
+  candidates: string[],
+  fallback: any = '',
+  fallbackColIndex?: number
+): any {
+  const res = getField(row, candidates, fallback, fallbackColIndex);
+  return res.raw !== '' && res.raw !== undefined && res.raw !== null ? res.raw : fallback;
+}
+
+function getCellDate(
+  row: ExtractedRow,
+  candidates: string[],
+  fallback = ''
+): string {
+  const res = getField(row, candidates, '');
+  // Try raw first (if serial number or ISO), then formatted string (e.g. DD/MM/YYYY)
+  const isoFromRaw = formatDateISO(res.raw, '');
+  if (isoFromRaw) return isoFromRaw;
+  const isoFromFmt = formatDateISO(res.fmt, '');
+  if (isoFromFmt) return isoFromFmt;
   return fallback;
 }
 
 // ============================================================================
-// C. AUTO-FIND HEADER ROW & EXTRACT DICTIONARY ROWS
+// C. SCAN ANY SHEET TO LOCATE HEADER ROW & EXTRACT ROWS
 // ============================================================================
 
-function extractRowsFromSheet(sheet: XLSX.WorkSheet): Record<string, any>[] {
-  const matrix: any[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
-  if (!matrix || matrix.length === 0) return [];
+const KNOWN_HEADER_KEYWORDS = [
+  'REF. MFX',
+  'REF MFX',
+  'PROCESSO',
+  'STATUS',
+  'COMPRADOR',
+  'COMPRADOR RESPONSAVEL',
+  'PO',
+  'OC',
+  'FORNECEDOR',
+  'EXPORTADOR',
+  'ORIGEM',
+  'INVOICE',
+  'FATURA',
+  'COD. MATERIAL',
+  'COD MATERIAL',
+  'DESCRICAO',
+  'QTD',
+  'QUANTIDADE',
+  'VALOR UNITARIO',
+  'VALOR TOTAL',
+  'UNIDADE DE MEDIDA',
+  'AGENTE DE CARGAS',
+  'AGENTE DE CARGA',
+  'BL / AWB',
+  'BL/AWB',
+  'INCOTERMS',
+  'INCOTERM',
+  'MODAL',
+  'DATA PRONTIDAO CARGA',
+  'PRONTIDAO DA CARGA',
+  'ETD',
+  'EMBARQUE',
+  'ETA',
+  'PREVISAO CHEGADA',
+  'PROJETO',
+  'VMLE',
+  'VMLD',
+];
 
-  // Scan the first 15 rows to find the row index headerRowIdx that contains
-  // "PROCESSO" and ("EXPORTADOR" or "FORNECEDOR" or "OC" or "PROJETO")
-  let headerRowIdx = -1;
-  const maxScan = Math.min(15, matrix.length);
+function extractRowsFromSheet(sheet: XLSX.WorkSheet): {
+  rows: ExtractedRow[];
+  isRealFlatItemTable: boolean;
+  isPedidosOnlySheet: boolean;
+} {
+  const rawMatrix: any[][] = XLSX.utils.sheet_to_json(sheet, {
+    header: 1,
+    raw: true,
+    defval: '',
+  });
+  const fmtMatrix: string[][] = XLSX.utils.sheet_to_json(sheet, {
+    header: 1,
+    raw: false,
+    defval: '',
+  });
 
-  for (let r = 0; r < maxScan; r++) {
-    const rowCells = (matrix[r] || []).map((c) => stripAccents(normalizeHeader(c)));
-    const hasProcesso = rowCells.some((c) => c === 'PROCESSO' || c.includes('PROCESSO'));
-    const hasPartnerOrOC = rowCells.some(
-      (c) =>
-        c.includes('EXPORTADOR') ||
-        c.includes('FORNECEDOR') ||
-        c === 'OC' ||
-        c.includes('PROJETO') ||
-        c.includes('FATURA')
-    );
-    if (hasProcesso && hasPartnerOrOC) {
-      headerRowIdx = r;
-      break;
-    }
+  if (!rawMatrix || rawMatrix.length === 0) {
+    return { rows: [], isRealFlatItemTable: false, isPedidosOnlySheet: false };
   }
 
-  // Fallback if sheet only has OC + FORNECEDOR
-  if (headerRowIdx === -1) {
-    for (let r = 0; r < maxScan; r++) {
-      const rowCells = (matrix[r] || []).map((c) => stripAccents(normalizeHeader(c)));
-      if (rowCells.some((c) => c === 'OC' || c.includes('FORNECEDOR') || c.includes('PROJETO'))) {
-        headerRowIdx = r;
-        break;
+  // Scan the first 15 rows to find the row index with the most matching MFX header keywords
+  let headerRowIdx = -1;
+  let bestScore = 0;
+  const maxScan = Math.min(15, rawMatrix.length);
+
+  for (let r = 0; r < maxScan; r++) {
+    const rowCells = (rawMatrix[r] || []).map((c) => stripAccents(normalizeHeader(c)));
+    let score = 0;
+    for (const cell of rowCells) {
+      if (!cell) continue;
+      if (
+        KNOWN_HEADER_KEYWORDS.some(
+          (kw) => cell === kw || (kw.length >= 4 && cell.includes(kw))
+        )
+      ) {
+        score++;
       }
+    }
+    if (score > bestScore && score >= 2) {
+      bestScore = score;
+      headerRowIdx = r;
     }
   }
 
@@ -193,52 +348,113 @@ function extractRowsFromSheet(sheet: XLSX.WorkSheet): Record<string, any>[] {
     headerRowIdx = 0;
   }
 
-  const rawHeaders = matrix[headerRowIdx] || [];
+  const rawHeaders = rawMatrix[headerRowIdx] || [];
   const normalizedHeaders = rawHeaders.map((h, i) => {
     const norm = normalizeHeader(h);
-    return norm || `COL_${i}`;
+    if (norm) return norm;
+    // Special rule from prompt: Col I (index 8) is DESCRIÇÃO if header is blank
+    if (i === 8) return 'DESCRIÇÃO';
+    return `COL_${i}`;
   });
 
-  const rows: Record<string, any>[] = [];
-  for (let r = headerRowIdx + 1; r < matrix.length; r++) {
-    const rowArr = matrix[r];
-    if (!rowArr || rowArr.length === 0) continue;
+  const strippedHeaders = normalizedHeaders.map((h) => stripAccents(h));
+  const isRealFlatItemTable = strippedHeaders.some(
+    (h) =>
+      h.includes('REF. MFX') ||
+      h.includes('REF MFX') ||
+      h.includes('COD. MATERIAL') ||
+      h.includes('COD MATERIAL') ||
+      h.includes('COMPRADOR') ||
+      h.includes('VALOR UNITARIO') ||
+      h.includes('BL / AWB') ||
+      h.includes('BL/AWB')
+  );
 
-    const dict: Record<string, any> = {};
+  const isPedidosOnlySheet =
+    !isRealFlatItemTable &&
+    strippedHeaders.some((h) => h === 'OC' || h === 'PO') &&
+    strippedHeaders.some((h) => h.includes('PRONTIDAO')) &&
+    !strippedHeaders.some((h) => h.includes('VMLE') || h.includes('DESEMBARACO'));
+
+  const rows: ExtractedRow[] = [];
+
+  for (let r = headerRowIdx + 1; r < rawMatrix.length; r++) {
+    const rawArr = rawMatrix[r] || [];
+    const fmtArr = fmtMatrix[r] || [];
+    if (rawArr.length === 0) continue;
+
+    const rawDict: Record<string, any> = {};
+    const fmtDict: Record<string, string> = {};
+
     for (let c = 0; c < normalizedHeaders.length; c++) {
       const key = normalizedHeaders[c];
-      dict[key] = rowArr[c] !== undefined ? rowArr[c] : '';
+      rawDict[key] = rawArr[c] !== undefined ? rawArr[c] : '';
+      fmtDict[key] = fmtArr[c] !== undefined ? String(fmtArr[c]) : '';
     }
 
-    const procVal = String(getCell(dict, ['PROCESSO'], '')).trim();
-    const ocVal = String(getCell(dict, ['OC', 'PO', 'PEDIDO'], '')).trim();
-    const expVal = String(getCell(dict, ['EXPORTADOR', 'FORNECEDOR'], '')).trim();
+    const rowObj: ExtractedRow = {
+      raw: rawDict,
+      fmt: fmtDict,
+      rawCols: rawArr,
+      fmtCols: fmtArr,
+    };
 
-    // Skip completely empty rows or repeated header banners
-    if (!procVal && !ocVal && !expVal) continue;
+    const refMfxVal = String(
+      getCell(rowObj, ['REF. MFX', 'REF MFX', 'PROCESSO'], '')
+    ).trim();
+    const poVal = String(getCell(rowObj, ['PO', 'OC', 'PEDIDO'], '')).trim();
+    const fornVal = String(getCell(rowObj, ['FORNECEDOR', 'EXPORTADOR'], '')).trim();
+    const codMatVal = String(
+      getCell(rowObj, ['COD. MATERIAL', 'COD MATERIAL', 'CODIGO MATERIAL'], '')
+    ).trim();
+    const blVal = String(getCell(rowObj, ['BL / AWB', 'BL/AWB', 'CONHECIMENTO'], '')).trim();
+
+    // Skip blank rows where REF. MFX, PO, FORNECEDOR, COD. MATERIAL, and BL/AWB are all empty
+    if (!refMfxVal && !poVal && !fornVal && !codMatVal && !blVal) continue;
+
+    // Skip repeated header rows or title banners
+    const upperRef = stripAccents(refMfxVal.toUpperCase());
     if (
-      procVal.toUpperCase() === 'PROCESSO' ||
-      procVal.toUpperCase().includes('ACOMPANHAMENTO')
+      upperRef === 'REF. MFX' ||
+      upperRef === 'REF MFX' ||
+      upperRef === 'PROCESSO' ||
+      upperRef.includes('ACOMPANHAMENTO DOS PROCESSOS')
     ) {
       continue;
     }
 
-    rows.push(dict);
+    rows.push(rowObj);
   }
 
-  return rows;
+  return { rows, isRealFlatItemTable, isPedidosOnlySheet };
 }
 
 // ============================================================================
 // D. STATUS, REGIME & RISK NORMALIZATION
 // ============================================================================
 
-export function normalizeStatus(rawStatus: string, entregaMFX: string, desembaraco: string, chegada: string, embarque: string): string {
+export function normalizeStatus(
+  rawStatus: string,
+  entregaMFX: string,
+  desembaraco: string,
+  chegada: string,
+  embarque: string
+): string {
   const s = stripAccents(String(rawStatus || '').toUpperCase().trim());
-  if (s.includes('PARADO') || s.includes('AGUARDANDO DRAWBACK') || s.includes('AG. DRAWBACK') || s.includes('BLOQUEADO')) {
+  if (
+    s.includes('PARADO') ||
+    s.includes('AGUARDANDO DRAWBACK') ||
+    s.includes('AG. DRAWBACK') ||
+    s.includes('BLOQUEADO')
+  ) {
     return 'Parado Ag. Drawback';
   }
-  if (s.includes('ENTREGUE') || s.includes('CONCLUIDO') || s.includes('FINALIZADO') || Boolean(entregaMFX)) {
+  if (
+    s.includes('ENTREGUE') ||
+    s.includes('CONCLUIDO') ||
+    s.includes('FINALIZADO') ||
+    Boolean(entregaMFX)
+  ) {
     return 'Entregue MFX';
   }
   if (s.includes('DESEMBARACADO') || s.includes('LIBERADO') || Boolean(desembaraco)) {
@@ -261,7 +477,13 @@ export function normalizeStatus(rawStatus: string, entregaMFX: string, desembara
   if (s.includes('PRODUCAO') || s.includes('FABRICACAO')) {
     return 'Em Produção Fornecedor';
   }
-  if (s.includes('EMBARQUE') || s.includes('PRONTA') || s.includes('COLETADO') || s.includes('AG.')) {
+  if (
+    s.includes('EMBARQUE') ||
+    s.includes('PRONTA') ||
+    s.includes('COLETADO') ||
+    s.includes('AG.') ||
+    s.includes('AGUARDANDO')
+  ) {
     return 'Ag. Embarque';
   }
   return rawStatus ? String(rawStatus).trim() : 'Em Trânsito';
@@ -287,17 +509,22 @@ export function normalizeCanal(rawCanal: string): string {
   return 'Pendente Registro';
 }
 
-export function computeProcessRisk(p: Partial<ImportProcess>): { riskLevel: RiskLevel; riskReason: string } {
+export function computeProcessRisk(p: Partial<ImportProcess>): {
+  riskLevel: RiskLevel;
+  riskReason: string;
+} {
   if (p.status === 'Entregue MFX' || Boolean(p.dataEntregaMFX)) {
     if ((p.impostosPagosIndevidamenteBRL || 0) > 0) {
       return {
         riskLevel: 'medium',
-        riskReason: `Entregue MFX (${p.dataEntregaMFX || 'Concluído'}) · R$ ${(p.impostosPagosIndevidamenteBRL || 0).toLocaleString('pt-BR')} em Recolhimento Integral`,
+        riskReason: `Entregue MFX (${p.dataEntregaMFX || 'Concluído'}) · R$ ${(
+          p.impostosPagosIndevidamenteBRL || 0
+        ).toLocaleString('pt-BR')} em Recolhimento Integral`,
       };
     }
     return {
       riskLevel: 'none',
-      riskReason: `Concluído / Entregue na Planta MFX (${p.dataEntregaMFX || 'OK'})`,
+      riskReason: `Concluído / Entregue na Planta MFX (${p.dataEntregaMFX || p.eta || 'OK'})`,
     };
   }
   if (p.cargaParadaDrawback || p.status === 'Parado Ag. Drawback') {
@@ -321,7 +548,9 @@ export function computeProcessRisk(p: Partial<ImportProcess>): { riskLevel: Risk
   if ((p.impostosPagosIndevidamenteBRL || 0) > 0) {
     return {
       riskLevel: 'high',
-      riskReason: `Alerta Fiscal: R$ ${(p.impostosPagosIndevidamenteBRL || 0).toLocaleString('pt-BR')} sob Recolhimento Integral`,
+      riskReason: `Alerta Fiscal: R$ ${(p.impostosPagosIndevidamenteBRL || 0).toLocaleString(
+        'pt-BR'
+      )} sob Recolhimento Integral`,
     };
   }
   if (p.canal === 'Vermelho' || p.canal === 'Amarelo' || (p.atrasoEtaDias || 0) > 2) {
@@ -335,12 +564,12 @@ export function computeProcessRisk(p: Partial<ImportProcess>): { riskLevel: Risk
   }
   return {
     riskLevel: 'low',
-    riskReason: `Operação no prazo · ${p.beneficioRaw || p.regime} · Saving R$ ${(p.savingFreteBRL || 0).toLocaleString('pt-BR')}`,
+    riskReason: `Operação no prazo · ${p.fornecedor} (${p.paisOrigem}) · BL/AWB ${p.blAwb}`,
   };
 }
 
 // ============================================================================
-// E. MAIN WORKBOOK PARSER (FUP IMPORTAÇÃO BI_2.xlsx)
+// E. MAIN WORKBOOK PARSER (SUPPORTS REAL MFX ITEM-LEVEL FLAT SHEET + LEGACY)
 // ============================================================================
 
 export function parseMfxExcelFile(
@@ -349,41 +578,651 @@ export function parseMfxExcelFile(
 ): {
   processos: ImportProcess[];
   pedidosForecast: PedidoForecastRow[];
+  rawItems: MfxRawItemRow[];
   pedidosCount: number;
   sheetNames: string[];
 } {
   const wb = XLSX.read(buffer, { type: 'array', cellDates: false });
-  const sheetNames = wb.SheetNames;
+  const sheetNames = wb.SheetNames || [];
 
-  // Locate PROCESSOS and PEDIDOS sheets
-  const processosSheetName =
-    sheetNames.find((s) => /PROCESSO/i.test(stripAccents(s))) || sheetNames[0];
-  const pedidosSheetName = sheetNames.find((s) => /PEDIDO/i.test(stripAccents(s)));
+  const allFlatRows: ExtractedRow[] = [];
+  const allLegacyProcessRows: ExtractedRow[] = [];
+  const allLegacyPedidoRows: ExtractedRow[] = [];
 
-  const rawProcessos = processosSheetName ? extractRowsFromSheet(wb.Sheets[processosSheetName]) : [];
-  const rawPedidos = pedidosSheetName ? extractRowsFromSheet(wb.Sheets[pedidosSheetName]) : [];
+  // Scan ALL sheets in workbook.SheetNames! Never fail if sheet isn't named PROCESSOS/PEDIDOS
+  for (const sName of sheetNames) {
+    const sheet = wb.Sheets[sName];
+    if (!sheet) continue;
+    const { rows, isRealFlatItemTable, isPedidosOnlySheet } = extractRowsFromSheet(sheet);
+    if (rows.length === 0) continue;
 
-  // 1. Parse PEDIDOS sheet rows
+    if (isRealFlatItemTable) {
+      allFlatRows.push(...rows);
+    } else if (isPedidosOnlySheet || /PEDIDO/i.test(stripAccents(sName))) {
+      allLegacyPedidoRows.push(...rows);
+    } else {
+      // Could be either flat item table or legacy PROCESSOS table
+      allLegacyProcessRows.push(...rows);
+    }
+  }
+
+  // ==========================================================================
+  // CASE 1: REAL MFX MASTER FLAT TABLE (Col A STATUS, Col B REF. MFX, Col C COMPRADOR, Col D PO...)
+  // ==========================================================================
+  if (allFlatRows.length > 0) {
+    const rawItems: MfxRawItemRow[] = [];
+    const pedidosForecast: PedidoForecastRow[] = [];
+    const groupedByRefMfx = new Map<
+      string,
+      {
+        refMfx: string;
+        rows: ExtractedRow[];
+        items: MfxRawItemRow[];
+      }
+    >();
+
+    allFlatRows.forEach((row, idx) => {
+      // Col A — STATUS
+      const rawStatus = String(
+        getCell(row, ['STATUS', 'SITUACAO', 'SITUAÇÃO'], '', 0)
+      ).trim();
+
+      // Col B — REF. MFX (or PROCESSO / REF MFX)
+      let refMfx = String(
+        getCell(row, ['REF. MFX', 'REF MFX', 'PROCESSO', 'REF'], '', 1)
+      ).trim();
+
+      // Col C — COMPRADOR RESPONSAVEL
+      const comprador = String(
+        getCell(
+          row,
+          ['COMPRADOR RESPONSAVEL', 'COMPRADOR RESPONSÁVEL', 'COMPRADOR'],
+          'COMEX MFX',
+          2
+        )
+      )
+        .trim()
+        .toUpperCase();
+
+      // Col D — PO (or OC / PEDIDO)
+      const po = String(
+        getCell(row, ['PO', 'OC', 'PEDIDO', 'ORDEM DE COMPRA'], '', 3)
+      ).trim();
+
+      // Col E — FORNECEDOR (or EXPORTADOR)
+      const fornecedor = String(
+        getCell(row, ['FORNECEDOR', 'EXPORTADOR'], 'FORNECEDOR MFX', 4)
+      )
+        .trim()
+        .toUpperCase();
+
+      // Col F — ORIGEM (or PAÍS / PAIS)
+      const origem = String(
+        getCell(row, ['ORIGEM', 'PAÍS', 'PAIS', 'PAIS DE ORIGEM'], 'ALEMANHA', 5)
+      )
+        .trim()
+        .toUpperCase();
+
+      // Col G — INVOICE (or FATURA)
+      const invoice = String(
+        getCell(row, ['INVOICE', 'FATURA', 'COMMERCIAL INVOICE', 'CI'], '', 6)
+      ).trim();
+
+      // Col H — COD. MATERIAL (or COD MATERIAL / CODIGO MATERIAL / ITEM)
+      const codMaterial = String(
+        getCell(
+          row,
+          ['COD. MATERIAL', 'COD MATERIAL', 'CODIGO MATERIAL', 'ITEM', 'CODIGO'],
+          `ITEM-${idx + 1}`,
+          7
+        )
+      ).trim();
+
+      // Col I — DESCRIÇÃO (or DESCRICAO / DESCRIÇÃO DO MATERIAL / MERCADORIA / Col index 8 if header is blank)
+      const descricao = String(
+        getCell(
+          row,
+          [
+            'DESCRIÇÃO',
+            'DESCRICAO',
+            'DESCRIÇÃO DO MATERIAL',
+            'DESCRICAO DO MATERIAL',
+            'MERCADORIA',
+          ],
+          `Material ${codMaterial}`,
+          8
+        )
+      ).trim();
+
+      // Col J — QTD (or QUANTIDADE)
+      const qtd = cleanNumber(getCell(row, ['QTD', 'QUANTIDADE', 'QTDE'], 1, 9)) || 1;
+
+      // Col K — VALOR UNITÁRIO (with currency detection)
+      const unitField = getField(
+        row,
+        ['VALOR UNITÁRIO', 'VALOR UNITARIO', 'VLR UNIT', 'PRECO UNITARIO'],
+        0,
+        10
+      );
+      const parsedUnit = detectCurrencyAndCleanValue(unitField.raw, unitField.fmt);
+
+      // Col L — VALOR TOTAL (with currency detection)
+      const totalField = getField(
+        row,
+        ['VALOR TOTAL', 'VLR TOTAL', 'VMLD', 'VMLE', 'VALOR'],
+        0,
+        11
+      );
+      const parsedTotal = detectCurrencyAndCleanValue(totalField.raw, totalField.fmt);
+
+      // Currency resolution
+      const explicitMoedaRaw = String(getCell(row, ['MOEDA'], '')).trim().toUpperCase();
+      let moeda: CurrencyCode = 'USD';
+      if (parsedTotal.currency) {
+        moeda = parsedTotal.currency;
+      } else if (parsedUnit.currency) {
+        moeda = parsedUnit.currency;
+      } else if (explicitMoedaRaw.includes('EUR') || explicitMoedaRaw.includes('€')) {
+        moeda = 'EUR';
+      } else if (explicitMoedaRaw.includes('BRL') || explicitMoedaRaw.includes('R$')) {
+        moeda = 'BRL';
+      } else if (explicitMoedaRaw.includes('CNY') || explicitMoedaRaw.includes('RMB')) {
+        moeda = 'CNY';
+      } else if (origem === 'ALEMANHA' || origem === 'ITALIA' || origem === 'FRANCA') {
+        // Default European origins to EUR if no symbol was present
+        moeda = 'EUR';
+      }
+
+      const valorUnitario =
+        parsedUnit.value > 0
+          ? parsedUnit.value
+          : parsedTotal.value > 0 && qtd > 0
+          ? Number((parsedTotal.value / qtd).toFixed(2))
+          : 0;
+      const valorTotal =
+        parsedTotal.value > 0 ? parsedTotal.value : Number((valorUnitario * qtd).toFixed(2));
+
+      // Col M — UNIDADE DE MEDIDA
+      const unidadeMedida = String(
+        getCell(row, ['UNIDADE DE MEDIDA', 'UNID', 'UM', 'UNIDADE'], 'PC', 12)
+      )
+        .trim()
+        .toUpperCase();
+
+      // Col N — AGENTE DE CARGAS
+      const agenteCargas = String(
+        getCell(row, ['AGENTE DE CARGAS', 'AGENTE DE CARGA', 'AGENTE'], 'CRONOS', 13)
+      )
+        .trim()
+        .toUpperCase();
+
+      // Col O — BL / AWB
+      const blAwb = String(
+        getCell(
+          row,
+          ['BL / AWB', 'BL/AWB', 'BL/ AWB', 'BL /AWB', 'CONHECIMENTO', 'BL', 'AWB'],
+          '',
+          14
+        )
+      ).trim();
+
+      // Col P — INCOTERMS
+      const incoterm = String(
+        getCell(row, ['INCOTERMS', 'INCOTERM'], 'FCA', 15)
+      )
+        .trim()
+        .toUpperCase();
+
+      // Col Q — MODAL
+      const modalRaw = stripAccents(
+        String(getCell(row, ['MODAL'], 'MARÍTIMO', 16)).trim().toUpperCase()
+      );
+      const modal: ModalType =
+        modalRaw.includes('AER') || modalRaw.includes('AIR')
+          ? 'AÉREO'
+          : modalRaw.includes('ROD')
+          ? 'RODOVIÁRIO'
+          : 'MARÍTIMO';
+
+      // Col R — DATA PRONTIDÃO CARGA
+      const dataProntidaoCarga = getCellDate(
+        row,
+        [
+          'DATA PRONTIDÃO CARGA',
+          'DATA PRONTIDAO CARGA',
+          'PRONTIDÃO DA CARGA',
+          'PRONTIDAO DA CARGA',
+          'PRONTIDÃO CARGA',
+          'PRONTIDAO CARGA',
+        ],
+        ''
+      );
+
+      // Col S — ETD
+      const etd = getCellDate(row, ['ETD', 'EMBARQUE', 'DATA EMBARQUE'], '');
+
+      // Col T — ETA
+      const eta = getCellDate(
+        row,
+        ['ETA', 'PREVISÃO CHEGADA', 'PREVISAO CHEGADA', 'CHEGADA'],
+        ''
+      );
+
+      // Col U+ — TR / TRANSIT TIME / TT (if blank, calculate cleanly as ETA - ETD in days)
+      const rawTT = getCell(row, ['TR', 'TRANSIT TIME', 'TT'], '');
+      let transitTimeDias = cleanNumber(rawTT);
+      if (!transitTimeDias || String(rawTT).trim().startsWith('#')) {
+        transitTimeDias = diffDaysBetween(eta, etd, modal === 'AÉREO' ? 3 : 20);
+      }
+
+      const projeto = String(
+        getCell(row, ['PROJETO'], comprador ? `COMP: ${comprador}` : 'PETROBRAS')
+      )
+        .trim()
+        .toUpperCase();
+
+      // Fallback key if REF. MFX is blank on a row
+      if (!refMfx) {
+        refMfx = blAwb ? `BL-${blAwb}` : po ? `PO-${po}` : `MFX-ITEM-${idx + 1}`;
+      }
+
+      const rawItem: MfxRawItemRow = {
+        id: `RAW-${idx + 1}`,
+        status: rawStatus || (eta && eta < '2026-03-01' ? 'ENTREGUE' : 'EM TRÂNSITO'),
+        refMfx,
+        compradorResponsavel: comprador,
+        po: po || 'S/ PO',
+        fornecedor,
+        origem,
+        invoice: invoice || 'S/ INV',
+        codMaterial,
+        descricao,
+        qtd,
+        valorUnitario,
+        valorTotal,
+        moeda,
+        unidadeMedida,
+        agenteCargas: agenteCargas || 'A DEFINIR',
+        blAwb: blAwb || 'A DEFINIR',
+        incoterm: incoterm || 'FCA',
+        modal,
+        dataProntidaoCarga: dataProntidaoCarga || etd || '',
+        etd: etd || '',
+        eta: eta || '',
+        transitTimeDias,
+        projeto,
+      };
+
+      rawItems.push(rawItem);
+
+      pedidosForecast.push({
+        id: `PO-LINE-${idx + 1}`,
+        projeto,
+        processo: refMfx,
+        compradorResponsavel: comprador,
+        fornecedor,
+        origem,
+        oc: po || 'S/ PO',
+        codMaterial,
+        descricao,
+        qtd,
+        unidadeMedida,
+        emissaoOC: dataProntidaoCarga || etd || '2026-01-15',
+        incoterm: incoterm || 'FCA',
+        valorUnitario,
+        valor: valorTotal,
+        moeda,
+        prontidaoCarga: dataProntidaoCarga || etd || 'A Confirmar',
+        etd,
+        eta,
+        agenteCargas,
+        blAwb,
+        modal,
+        status: rawItem.status,
+      });
+
+      if (!groupedByRefMfx.has(refMfx)) {
+        groupedByRefMfx.set(refMfx, { refMfx, rows: [], items: [] });
+      }
+      const group = groupedByRefMfx.get(refMfx)!;
+      group.rows.push(row);
+      group.items.push(rawItem);
+    });
+
+    // Build Grouped Processes (processosConsolidados) from groupedByRefMfx
+    const parsedProcessos: ImportProcess[] = [];
+
+    Array.from(groupedByRefMfx.values()).forEach((group, gIdx) => {
+      const firstRow = group.rows[0];
+      const firstItem = group.items[0];
+      const id = group.refMfx;
+
+      const uniquePOs = Array.from(
+        new Set(group.items.map((i) => i.po).filter((x) => x && x !== 'S/ PO'))
+      );
+      const oc = uniquePOs.length > 0 ? uniquePOs.join(', ') : firstItem.po;
+
+      const uniqueInvoices = Array.from(
+        new Set(group.items.map((i) => i.invoice).filter((x) => x && x !== 'S/ INV'))
+      );
+      const commercialInvoice =
+        uniqueInvoices.length > 0 ? uniqueInvoices.join(', ') : firstItem.invoice;
+
+      const compradorResponsavel = firstItem.compradorResponsavel || 'EUDE';
+      const fornecedor = firstItem.fornecedor;
+      const paisOrigem = firstItem.origem;
+      const moeda = firstItem.moeda;
+      const taxaPtaxDI =
+        moeda === 'BRL' ? 1 : ptax[moeda as 'USD' | 'EUR' | 'CNY'] || 5.7842;
+
+      const totalValorMoeda = Number(
+        group.items.reduce((sum, item) => sum + item.valorTotal, 0).toFixed(2)
+      );
+      const totalQtdUnidades = group.items.reduce((sum, item) => sum + item.qtd, 0);
+
+      // Check optional Col U+ columns if present in the sheet
+      const dataChegadaEfetiva = getCellDate(firstRow, ['CHEGADA', 'DATA CHEGADA'], '');
+      const dataRegistroDI = getCellDate(
+        firstRow,
+        ['DATA DO REGISTRO', 'DATA REGISTRO'],
+        ''
+      );
+      const dataDesembaraco = getCellDate(
+        firstRow,
+        ['DESEMBARAÇO', 'DESEMBARACO', 'DATA DESEMBARACO'],
+        ''
+      );
+      const dataEntregaMFX = getCellDate(
+        firstRow,
+        ['ENTREGA MFX', 'DATA ENTREGA MFX', 'DATA ENTREGA'],
+        ''
+      );
+
+      const statusRawExcel = firstItem.status;
+      const status = normalizeStatus(
+        statusRawExcel,
+        dataEntregaMFX,
+        dataDesembaraco,
+        dataChegadaEfetiva,
+        firstItem.etd
+      );
+
+      const effectiveDeliveryDate =
+        dataEntregaMFX || (status === 'Entregue MFX' ? firstItem.eta : '');
+
+      const beneficioRaw = String(
+        getCell(firstRow, ['BENEFÍCIO', 'BENEFICIO', 'REGIME', 'DRAWBACK'], 'DRAWBACK')
+      )
+        .trim()
+        .toUpperCase();
+      const regime = normalizeRegime(beneficioRaw);
+
+      const explicitProjeto = String(getCell(firstRow, ['PROJETO'], '')).trim().toUpperCase();
+      const projeto =
+        explicitProjeto ||
+        (fornecedor.includes('TRATOS') || fornecedor.includes('WALTHER')
+          ? 'PETROBRAS'
+          : fornecedor.includes('ACOTEQ')
+          ? 'PRIO'
+          : 'PETROBRAS');
+
+      const defaultAC =
+        String(getCell(firstRow, ['ATO CONCESSÓRIO', 'ATO CONCESSORIO', 'AC'], '')).trim() ||
+        (regime === 'Recolhimento Integral'
+          ? 'SEM AC (Recolhimento)'
+          : projeto === 'PRIO'
+          ? 'AC-2025/004115-2'
+          : 'AC-2025/001482-9');
+
+      const vmleBRL = Math.round(totalValorMoeda * taxaPtaxDI);
+      const cotacaoFreteBRL =
+        cleanNumber(
+          getCell(firstRow, ['COTAÇÃO FRETE R$', 'COTACAO FRETE R$', 'COTACAO FRETE'], 0)
+        ) || Math.round(vmleBRL * 0.085);
+      const fretePagoBRL =
+        cleanNumber(getCell(firstRow, ['FRETE PAGO R$', 'FRETE PAGO', 'FRETE'], 0)) ||
+        Math.round(cotacaoFreteBRL * 0.84);
+
+      const rawSavingCell = getCell(firstRow, ['SAVING FRETE', 'SAVING'], '');
+      const savingFreteBRL =
+        rawSavingCell && !String(rawSavingCell).startsWith('#')
+          ? cleanNumber(rawSavingCell)
+          : Math.max(0, cotacaoFreteBRL - fretePagoBRL);
+      const savingFretePercent =
+        cotacaoFreteBRL > 0 ? (savingFreteBRL / cotacaoFreteBRL) * 100 : 16.0;
+
+      const vmldBRL = vmleBRL + fretePagoBRL;
+      const freteInternacionalMoeda = Number((fretePagoBRL / taxaPtaxDI).toFixed(2));
+
+      // Taxes calculation (BRL)
+      const iiBRL = Math.round(vmldBRL * 0.14);
+      const ipiBRL = Math.round((vmldBRL + iiBRL) * 0.05);
+      const pisBRL = Math.round(vmldBRL * 0.021);
+      const cofinsBRL = Math.round(vmldBRL * 0.0965);
+      const icmsBRL = Math.round(vmldBRL * 0.22);
+      const totalImpostosEstimadosBRL = iiBRL + ipiBRL + pisBRL + cofinsBRL + icmsBRL;
+
+      const impostosSuspensosDrawbackBRL =
+        regime === 'Drawback Suspensão' || regime === 'Ex-Tarifário'
+          ? totalImpostosEstimadosBRL
+          : 0;
+      const impostosPagosIndevidamenteBRL =
+        regime === 'Recolhimento Integral' && projeto !== 'ESTOQUE'
+          ? totalImpostosEstimadosBRL
+          : 0;
+
+      const numeroDiDuimp =
+        String(getCell(firstRow, ['DI', 'DUIMP'], '')).trim() ||
+        (status === 'Entregue MFX' ? `26/04819${gIdx + 1}-0` : 'Pendente Registro');
+      const canalRaw = String(getCell(firstRow, ['CANAL'], '')).trim();
+      const canal = canalRaw
+        ? normalizeCanal(canalRaw)
+        : status === 'Entregue MFX'
+        ? 'Verde'
+        : 'Pendente Registro';
+
+      const localDesembaraco =
+        String(
+          getCell(
+            firstRow,
+            ['LOCAL DESEMBARAÇO', 'LOCAL DESEMBARACO'],
+            firstItem.modal === 'AÉREO' ? 'GUARULHOS / TECA SSA' : 'SALVADOR (TECON)'
+          )
+        )
+          .trim()
+          .toUpperCase() || 'SALVADOR';
+
+      const itens: PedidoItem[] = group.items.map((it, itemIdx) => ({
+        id: `IT-${id}-${itemIdx + 1}`,
+        oc: it.po,
+        processoId: id,
+        compradorResponsavel: it.compradorResponsavel,
+        invoice: it.invoice,
+        codigoItem: it.codMaterial,
+        descricao: it.descricao,
+        ncm: it.descricao.includes('CABO')
+          ? '8544.60.00'
+          : it.descricao.includes('ENGATE')
+          ? '7307.99.00'
+          : it.descricao.includes('MOTOR')
+          ? '8501.52.10'
+          : '8481.80.99',
+        ncmAtoConcessorio: it.descricao.includes('CABO')
+          ? '8544.60.00'
+          : it.descricao.includes('ENGATE')
+          ? '7307.99.00'
+          : '8481.80.99',
+        quantidade: it.qtd,
+        qtdAutorizadaAC: it.qtd * 2,
+        unidade: it.unidadeMedida,
+        valorUnitarioMoeda: it.valorUnitario,
+        valorTotalMoeda: it.valorTotal,
+        moeda: it.moeda,
+        fornecedor: it.fornecedor,
+        origem: it.origem,
+        projeto,
+        dataEmissaoPO: it.dataProntidaoCarga || it.etd || '2026-01-10',
+        previsaoProntidaoCarga: it.dataProntidaoCarga || it.etd || '2026-01-21',
+        etd: it.etd,
+        eta: it.eta,
+        statusItem: it.status,
+        alertaLaudoTecnico: 'OK',
+        acSugerido: defaultAC,
+      }));
+
+      const cargaParadaDrawback =
+        status === 'Parado Ag. Drawback' ||
+        stripAccents(statusRawExcel.toUpperCase()).includes('DRAWBACK');
+
+      const alertaPreAlertaAWB =
+        firstItem.modal === 'AÉREO' &&
+        status !== 'Entregue MFX' &&
+        (!firstItem.blAwb || firstItem.blAwb === 'A DEFINIR');
+
+      const tempoDesembaracoDias = firstItem.modal === 'AÉREO' ? 2 : 4;
+      const tempoEntregaRodoviariaDias = 2;
+
+      const partialProc: ImportProcess = {
+        id,
+        compradorResponsavel,
+        oc,
+        posList: uniquePOs,
+        commercialInvoice,
+        invoicesList: uniqueInvoices,
+        fornecedor,
+        paisOrigem,
+        projeto,
+        status,
+        statusRawExcel,
+        modal: firstItem.modal,
+        incoterm: firstItem.incoterm,
+        regime,
+        beneficioRaw,
+        atoConcessorio: defaultAC,
+        despachante: 'ÔMEGA',
+        agenteCarga: firstItem.agenteCargas,
+        armadorCiaAerea: firstItem.agenteCargas,
+        blAwb: firstItem.blAwb,
+        numeroDiDuimp,
+        canal,
+        liAnuente: 'NÃO',
+        portoAeroportoDestino: localDesembaraco,
+        dataPO: firstItem.dataProntidaoCarga || firstItem.etd || '2026-01-15',
+        dataProntidaoCarga: firstItem.dataProntidaoCarga || firstItem.etd || '2026-01-21',
+        etd: firstItem.etd || 'Aguardando',
+        etaOriginalPO: firstItem.eta || 'Aguardando',
+        eta: firstItem.eta || 'Aguardando',
+        dataChegadaEfetiva:
+          dataChegadaEfetiva || (status === 'Entregue MFX' ? firstItem.eta : undefined),
+        dataRegistroDI:
+          dataRegistroDI || (status === 'Entregue MFX' ? firstItem.eta : undefined),
+        dataDesembaraco:
+          dataDesembaraco || (status === 'Entregue MFX' ? firstItem.eta : undefined),
+        dataEntregaMFX: effectiveDeliveryDate || undefined,
+        prazoEntregaMFX: effectiveDeliveryDate || firstItem.eta || 'A Confirmar',
+        transitTimeDias: firstItem.transitTimeDias,
+        tempoDesembaracoDias,
+        tempoEntregaRodoviariaDias,
+        leadTimeTotalDias:
+          firstItem.transitTimeDias + tempoDesembaracoDias + tempoEntregaRodoviariaDias,
+        freeTimeTotalDias: firstItem.modal === 'AÉREO' ? 5 : 14,
+        freeTimeDiasRestantes: status === 'Entregue MFX' ? 10 : cargaParadaDrawback ? 2 : 9,
+        cargaParadaDrawback,
+        motivoParadaDrawback: cargaParadaDrawback
+          ? `Aguardando vinculação de Ato Concessório (${defaultAC})`
+          : undefined,
+        diasParadoPortoAeroporto: cargaParadaDrawback ? 6 : 0,
+        alertaPreAlertaAWB,
+        atrasoEtaDias: 0,
+        moeda,
+        taxaPtaxDI,
+        condicaoPagamento: '90 DDL',
+        dataVencimentoInvoice: firstItem.eta || '2026-06-30',
+        statusPagamentoInvoice: status === 'Entregue MFX' ? 'Pago' : 'A Vencer',
+        valorFOBMoeda: totalValorMoeda,
+        valorVMLDMoeda: Number((totalValorMoeda + freteInternacionalMoeda).toFixed(2)),
+        freteInternacionalMoeda,
+        seguroMoeda: 0,
+        vmleBRL,
+        vmldBRL,
+        iiBRL,
+        ipiBRL,
+        pisBRL,
+        cofinsBRL,
+        icmsBRL,
+        totalImpostosEstimadosBRL,
+        impostosSuspensosDrawbackBRL,
+        impostosPagosIndevidamenteBRL,
+        despesasAduaneirasBRL: Math.round(vmldBRL * 0.015),
+        armazenagemAcumuladaBRL: Math.round(vmldBRL * 0.008),
+        custoDiarioArmazenagemBRL: 0,
+        cotacaoFreteBRL,
+        fretePagoBRL,
+        savingFreteBRL,
+        savingFretePercent,
+        transportadoraNacional: 'RODOVIÁRIO MFX',
+        freteRodoviarioBRL: firstItem.modal === 'MARÍTIMO' ? 8500 : 2400,
+        pesoBrutoKg: Math.max(150, totalQtdUnidades * 12),
+        cubagemCbm: firstItem.modal === 'MARÍTIMO' ? 28 : 3.5,
+        qtdContainersFCL: firstItem.modal === 'MARÍTIMO' ? 1 : 0,
+        qtdTotalUnidades: totalQtdUnidades,
+        itens,
+        riskLevel: 'low',
+        riskReason: '',
+      };
+
+      const risk = computeProcessRisk(partialProc);
+      partialProc.riskLevel = risk.riskLevel;
+      partialProc.riskReason = risk.riskReason;
+
+      parsedProcessos.push(partialProc);
+    });
+
+    return {
+      processos: parsedProcessos,
+      pedidosForecast,
+      rawItems,
+      pedidosCount: rawItems.length,
+      sheetNames,
+    };
+  }
+
+  // ==========================================================================
+  // CASE 2: SECONDARY FALLBACK — LEGACY PROCESSOS / PEDIDOS SHEETS
+  // ==========================================================================
   const pedidosForecast: PedidoForecastRow[] = [];
+  const rawItems: MfxRawItemRow[] = [];
   const pedidosByProc: Record<string, PedidoItem[]> = {};
   const pedidosByOC: Record<string, PedidoItem[]> = {};
 
-  rawPedidos.forEach((row, idx) => {
-    const projeto = String(getCell(row, ['PROJETO'], 'PETROBRAS')).trim().toUpperCase() || 'PETROBRAS';
-    const processo = String(getCell(row, ['PROCESSO'], '')).trim();
-    const fornecedor = String(getCell(row, ['FORNECEDOR', 'EXPORTADOR'], 'NOV')).trim().toUpperCase() || 'NOV';
+  allLegacyPedidoRows.forEach((row, idx) => {
+    const projeto =
+      String(getCell(row, ['PROJETO'], 'PETROBRAS')).trim().toUpperCase() || 'PETROBRAS';
+    const processo = String(getCell(row, ['PROCESSO', 'REF. MFX', 'REF MFX'], '')).trim();
+    const fornecedor =
+      String(getCell(row, ['FORNECEDOR', 'EXPORTADOR'], 'NOV')).trim().toUpperCase() || 'NOV';
     const oc = String(getCell(row, ['OC', 'PO', 'PEDIDO'], `OC-${idx + 1}`)).trim();
-    const emissaoOC = formatDateISO(getCell(row, ['EMISSÃO OC', 'EMISSAO OC', 'DATA OC', 'DATA PO'], ''), '2026-09-01');
-    const incoterm = String(getCell(row, ['INCOTERM'], 'FCA')).trim().toUpperCase() || 'FCA';
-    const valor = cleanNumber(getCell(row, ['VALOR', 'VALOR TOTAL', 'VMLE'], 0));
-    const moedaRaw = String(getCell(row, ['MOEDA'], 'USD')).trim().toUpperCase();
-    const moeda: CurrencyCode = moedaRaw.includes('EUR')
-      ? 'EUR'
-      : moedaRaw.includes('CNY') || moedaRaw.includes('RMB')
-      ? 'CNY'
-      : 'USD';
-    const prontidaoCarga = formatDateISO(
-      getCell(row, ['PRONTIDÃO DA CARGA', 'PRONTIDAO DA CARGA', 'PRONTIDAO'], ''),
+    const emissaoOC = getCellDate(
+      row,
+      ['EMISSÃO OC', 'EMISSAO OC', 'DATA OC', 'DATA PO'],
+      '2026-09-01'
+    );
+    const incoterm =
+      String(getCell(row, ['INCOTERM', 'INCOTERMS'], 'FCA')).trim().toUpperCase() || 'FCA';
+    const valField = getField(row, ['VALOR', 'VALOR TOTAL', 'VMLE'], 0);
+    const parsedVal = detectCurrencyAndCleanValue(valField.raw, valField.fmt);
+    const valor = parsedVal.value;
+    const moedaRaw = String(getCell(row, ['MOEDA'], '')).trim().toUpperCase();
+    const moeda: CurrencyCode =
+      parsedVal.currency ||
+      (moedaRaw.includes('EUR')
+        ? 'EUR'
+        : moedaRaw.includes('CNY') || moedaRaw.includes('RMB')
+        ? 'CNY'
+        : 'USD');
+    const prontidaoCarga = getCellDate(
+      row,
+      ['PRONTIDÃO DA CARGA', 'PRONTIDAO DA CARGA', 'DATA PRONTIDÃO CARGA', 'PRONTIDAO'],
       '2026-10-15'
     );
     const status = String(getCell(row, ['STATUS', 'SITUACAO'], 'AGUARDANDO EMBARQUE')).trim();
@@ -406,12 +1245,14 @@ export function parseMfxExcelFile(
       id: `PED-IT-${idx + 1}`,
       oc,
       processoId: processo || `PO-${oc}`,
-      codigoItem: `OC-${oc}`,
-      descricao: `Pedido ${oc} — ${fornecedor} (${projeto})`,
+      codigoItem: String(getCell(row, ['COD. MATERIAL', 'COD MATERIAL'], `OC-${oc}`)).trim(),
+      descricao: String(
+        getCell(row, ['DESCRIÇÃO', 'DESCRICAO'], `Pedido ${oc} — ${fornecedor} (${projeto})`)
+      ).trim(),
       ncm: String(getCell(row, ['NCM'], '8481.80.99')),
       quantidade: cleanNumber(getCell(row, ['QTD', 'QUANTIDADE'], 1)) || 1,
       qtdAutorizadaAC: 100,
-      unidade: 'LOTE',
+      unidade: String(getCell(row, ['UNIDADE DE MEDIDA', 'UNID', 'UM'], 'UN')).trim(),
       valorUnitarioMoeda: valor,
       valorTotalMoeda: valor,
       moeda,
@@ -433,59 +1274,73 @@ export function parseMfxExcelFile(
     }
   });
 
-  // 2. Parse PROCESSOS sheet (36 columns)
   const seenProcessIds = new Set<string>();
   const parsedProcessos: ImportProcess[] = [];
 
-  rawProcessos.forEach((row, idx) => {
-    const projeto = String(getCell(row, ['PROJETO'], 'PETROBRAS')).trim().toUpperCase() || 'PETROBRAS';
+  allLegacyProcessRows.forEach((row, idx) => {
+    const projeto =
+      String(getCell(row, ['PROJETO'], 'PETROBRAS')).trim().toUpperCase() || 'PETROBRAS';
     const id = String(
-      getCell(row, ['PROCESSO'], `IMP-${String(idx + 1).padStart(3, '0')}/26`)
+      getCell(
+        row,
+        ['REF. MFX', 'REF MFX', 'PROCESSO'],
+        `IMP-${String(idx + 1).padStart(3, '0')}/26`
+      )
     ).trim();
     seenProcessIds.add(id);
 
-    const fornecedor = String(
-      getCell(row, ['EXPORTADOR', 'FORNECEDOR'], 'NOV')
+    const compradorResponsavel = String(
+      getCell(row, ['COMPRADOR RESPONSAVEL', 'COMPRADOR'], 'EUDE')
     )
       .trim()
       .toUpperCase();
-    const fatura = String(getCell(row, ['FATURA', 'INVOICE', 'CI'], `CI-${id}`)).trim();
-    const oc = String(getCell(row, ['OC', 'PO'], `OC-${idx + 1}`)).trim();
+    const fornecedor = String(getCell(row, ['EXPORTADOR', 'FORNECEDOR'], 'NOV'))
+      .trim()
+      .toUpperCase();
+    const fatura = String(getCell(row, ['INVOICE', 'FATURA', 'CI'], `CI-${id}`)).trim();
+    const oc = String(getCell(row, ['PO', 'OC', 'PEDIDO'], `OC-${idx + 1}`)).trim();
 
     const modalRaw = stripAccents(String(getCell(row, ['MODAL'], 'MARÍTIMO')).toUpperCase());
-    const modal: ModalType = modalRaw.includes('AER') || modalRaw.includes('AIR') ? 'AÉREO' : 'MARÍTIMO';
+    const modal: ModalType =
+      modalRaw.includes('AER') || modalRaw.includes('AIR') ? 'AÉREO' : 'MARÍTIMO';
 
-    const incoterm = String(getCell(row, ['INCOTERM'], 'FCA')).trim().toUpperCase() || 'FCA';
+    const incoterm =
+      String(getCell(row, ['INCOTERMS', 'INCOTERM'], 'FCA')).trim().toUpperCase() || 'FCA';
 
     const condPagRaw = String(getCell(row, ['COND. PAGAMENTO', 'COND PAGAMENTO'], '90')).trim();
     const condNum = cleanNumber(condPagRaw);
     const condicaoPagamento =
       condNum > 0 ? `${condNum} DDL` : condPagRaw ? condPagRaw.toUpperCase() : '90 DDL';
 
-    const moedaRaw = String(getCell(row, ['MOEDA'], 'USD')).trim().toUpperCase();
-    const moeda: CurrencyCode = moedaRaw.includes('EUR')
-      ? 'EUR'
-      : moedaRaw.includes('CNY') || moedaRaw.includes('RMB')
-      ? 'CNY'
-      : 'USD';
-    const taxaPtaxDI = ptax[moeda] || 5.7842;
+    const vmleField = getField(row, ['VALOR TOTAL', 'VMLE', 'VALOR FOB', 'VALOR'], 0);
+    const vmldField = getField(row, ['VMLD', 'VALOR CIF'], 0);
+    const parsedVmle = detectCurrencyAndCleanValue(vmleField.raw, vmleField.fmt);
+    const parsedVmld = detectCurrencyAndCleanValue(vmldField.raw, vmldField.fmt);
 
-    const rawVmle = cleanNumber(getCell(row, ['VMLE', 'VALOR FOB'], 0));
-    const rawVmld = cleanNumber(getCell(row, ['VMLD', 'VALOR CIF'], 0));
+    const moedaRaw = String(getCell(row, ['MOEDA'], '')).trim().toUpperCase();
+    const moeda: CurrencyCode =
+      parsedVmle.currency ||
+      parsedVmld.currency ||
+      (moedaRaw.includes('EUR')
+        ? 'EUR'
+        : moedaRaw.includes('CNY') || moedaRaw.includes('RMB')
+        ? 'CNY'
+        : 'USD');
+    const taxaPtaxDI = moeda === 'BRL' ? 1 : ptax[moeda as 'USD' | 'EUR' | 'CNY'] || 5.7842;
 
-    // Determine whether VMLE/VMLD in the sheet are in foreign currency or BRL
-    const valorFOBMoeda = rawVmle > 0 ? rawVmle : rawVmld > 0 ? rawVmld * 0.92 : 85000;
-    const valorVMLDMoeda = rawVmld > 0 ? rawVmld : valorFOBMoeda * 1.06;
+    const valorFOBMoeda =
+      parsedVmle.value > 0
+        ? parsedVmle.value
+        : parsedVmld.value > 0
+        ? parsedVmld.value * 0.92
+        : 85000;
+    const valorVMLDMoeda = parsedVmld.value > 0 ? parsedVmld.value : valorFOBMoeda * 1.06;
 
     const cotacaoFreteBRL = cleanNumber(
       getCell(row, ['COTAÇÃO FRETE R$', 'COTACAO FRETE R$', 'COTACAO FRETE'], 0)
     );
-    const fretePagoBRL = cleanNumber(
-      getCell(row, ['FRETE PAGO R$', 'FRETE PAGO'], 0)
-    );
+    const fretePagoBRL = cleanNumber(getCell(row, ['FRETE PAGO R$', 'FRETE PAGO'], 0));
 
-    // SAVING FRETE: Calculate as cleanNumber(row['COTAÇÃO FRETE R$']) - cleanNumber(row['FRETE PAGO R$'])
-    // whenever the Excel cell has #VALUE! or is blank
     const rawSavingCell = getCell(row, ['SAVING FRETE', 'SAVING'], '');
     let savingFreteBRL = 0;
     if (
@@ -512,14 +1367,19 @@ export function parseMfxExcelFile(
       fretePagoBRL > 0 ? fretePagoBRL / taxaPtaxDI : Math.max(0, valorVMLDMoeda - valorFOBMoeda);
 
     const agenteCarga =
-      String(getCell(row, ['AGENTE DE CARGA', 'AGENTE'], 'DSV')).trim().toUpperCase() || 'DSV';
+      String(getCell(row, ['AGENTE DE CARGAS', 'AGENTE DE CARGA', 'AGENTE'], 'DSV'))
+        .trim()
+        .toUpperCase() || 'DSV';
 
-    const etd = formatDateISO(getCell(row, ['EMBARQUE', 'ETD'], ''), '');
-    const eta = formatDateISO(getCell(row, ['PREVISÃO CHEGADA', 'PREVISAO CHEGADA', 'ETA'], ''), '');
-    const dataChegadaEfetiva = formatDateISO(getCell(row, ['CHEGADA'], ''), '');
+    const etd = getCellDate(row, ['ETD', 'EMBARQUE', 'DATA EMBARQUE'], '');
+    const eta = getCellDate(
+      row,
+      ['ETA', 'PREVISÃO CHEGADA', 'PREVISAO CHEGADA'],
+      ''
+    );
+    const dataChegadaEfetiva = getCellDate(row, ['CHEGADA'], '');
 
-    // TT: Transit Time in days (if #VALUE! or blank, auto-calculate as CHEGADA - EMBARQUE or PREVISÃO CHEGADA - EMBARQUE)
-    const rawTT = getCell(row, ['TT', 'TRANSIT TIME'], '');
+    const rawTT = getCell(row, ['TT', 'TR', 'TRANSIT TIME'], '');
     let transitTimeDias = cleanNumber(rawTT);
     if (!transitTimeDias || String(rawTT).trim().startsWith('#')) {
       transitTimeDias = diffDaysBetween(
@@ -530,13 +1390,19 @@ export function parseMfxExcelFile(
     }
 
     const localDesembaraco =
-      String(getCell(row, ['LOCAL DESEMBARAÇO', 'LOCAL DESEMBARACO'], modal === 'AÉREO' ? 'VIRACOPOS' : 'SALVADOR'))
+      String(
+        getCell(
+          row,
+          ['LOCAL DESEMBARAÇO', 'LOCAL DESEMBARACO'],
+          modal === 'AÉREO' ? 'VIRACOPOS' : 'SALVADOR'
+        )
+      )
         .trim()
         .toUpperCase() || 'SALVADOR';
 
     const anuencia =
       String(getCell(row, ['ANUÊNCIA', 'ANUENCIA'], 'NÃO')).trim().toUpperCase() || 'NÃO';
-    const deferimentoLI = formatDateISO(getCell(row, ['DEFERIMENTO LI'], ''), '');
+    const deferimentoLI = getCellDate(row, ['DEFERIMENTO LI'], '');
 
     const beneficioRaw =
       String(getCell(row, ['BENEFÍCIO', 'BENEFICIO'], 'DRAWBACK')).trim().toUpperCase() ||
@@ -545,12 +1411,15 @@ export function parseMfxExcelFile(
 
     const numeroDiDuimp =
       String(getCell(row, ['DI', 'DUIMP'], '')).trim() || 'Pendente Registro';
-    const dataRegistroDI = formatDateISO(getCell(row, ['DATA DO REGISTRO', 'DATA REGISTRO'], ''), '');
+    const dataRegistroDI = getCellDate(row, ['DATA DO REGISTRO', 'DATA REGISTRO'], '');
     const canal = normalizeCanal(String(getCell(row, ['CANAL'], '')));
-    const dataDesembaraco = formatDateISO(getCell(row, ['DESEMBARAÇO', 'DESEMBARACO'], ''), '');
+    const dataDesembaraco = getCellDate(row, ['DESEMBARAÇO', 'DESEMBARACO'], '');
 
-    // DIAS P/ LIBERAÇÃO (DESEMBARAÇO - CHEGADA)
-    const rawDiasLib = getCell(row, ['DIAS P/ LIBERAÇÃO', 'DIAS P/ LIBERACAO', 'DIAS LIBERACAO'], '');
+    const rawDiasLib = getCell(
+      row,
+      ['DIAS P/ LIBERAÇÃO', 'DIAS P/ LIBERACAO', 'DIAS LIBERACAO'],
+      ''
+    );
     let tempoDesembaracoDias = cleanNumber(rawDiasLib);
     if (!tempoDesembaracoDias || String(rawDiasLib).trim().startsWith('#')) {
       tempoDesembaracoDias = diffDaysBetween(
@@ -560,19 +1429,21 @@ export function parseMfxExcelFile(
       );
     }
 
-    const dataCarregamento = formatDateISO(getCell(row, ['CARREGAMENTO'], ''), '');
+    const dataCarregamento = getCellDate(row, ['CARREGAMENTO'], '');
     const transportadoraNacional =
       String(getCell(row, ['TRANSPORTADORA'], 'RODOVIÁRIO MFX')).trim() || 'RODOVIÁRIO MFX';
-    const dataEntregaMFX = formatDateISO(getCell(row, ['ENTREGA MFX', 'DATA ENTREGA MFX'], ''), '');
+    const dataEntregaMFX = getCellDate(row, ['ENTREGA MFX', 'DATA ENTREGA MFX'], '');
 
-    // TRÂNSITO (ENTREGA MFX - CARREGAMENTO)
     const rawTransito = getCell(row, ['TRÂNSITO', 'TRANSITO'], '');
     let tempoEntregaRodoviariaDias = cleanNumber(rawTransito);
     if (!tempoEntregaRodoviariaDias || String(rawTransito).trim().startsWith('#')) {
-      tempoEntregaRodoviariaDias = diffDaysBetween(dataEntregaMFX, dataCarregamento || dataDesembaraco, 2);
+      tempoEntregaRodoviariaDias = diffDaysBetween(
+        dataEntregaMFX,
+        dataCarregamento || dataDesembaraco,
+        2
+      );
     }
 
-    // LEAD TIME (ENTREGA MFX - EMBARQUE)
     const rawLeadTime = getCell(row, ['LEAD TIME'], '');
     let leadTimeTotalDias = cleanNumber(rawLeadTime);
     if (!leadTimeTotalDias || String(rawLeadTime).trim().startsWith('#')) {
@@ -590,12 +1461,12 @@ export function parseMfxExcelFile(
       etd
     );
 
-    const dataVencimentoInvoice = formatDateISO(
-      getCell(row, ['DATA DE VENCIMENTO', 'VENCIMENTO'], ''),
+    const dataVencimentoInvoice = getCellDate(
+      row,
+      ['DATA DE VENCIMENTO', 'VENCIMENTO'],
       eta || '2026-12-15'
     );
 
-    // Taxes calculation (BRL)
     const iiBRL = vmldBRL * 0.14;
     const ipiBRL = (vmldBRL + iiBRL) * 0.05;
     const pisBRL = vmldBRL * 0.021;
@@ -604,11 +1475,14 @@ export function parseMfxExcelFile(
     const totalImpostosEstimadosBRL = iiBRL + ipiBRL + pisBRL + cofinsBRL + icmsBRL;
 
     const impostosSuspensosDrawbackBRL =
-      regime === 'Drawback Suspensão' || regime === 'Ex-Tarifário' ? totalImpostosEstimadosBRL : 0;
+      regime === 'Drawback Suspensão' || regime === 'Ex-Tarifário'
+        ? totalImpostosEstimadosBRL
+        : 0;
     const impostosPagosIndevidamenteBRL =
-      regime === 'Recolhimento Integral' && projeto !== 'ESTOQUE' ? totalImpostosEstimadosBRL : 0;
+      regime === 'Recolhimento Integral' && projeto !== 'ESTOQUE'
+        ? totalImpostosEstimadosBRL
+        : 0;
 
-    // Assign AC based on project
     const defaultAC =
       regime === 'Recolhimento Integral'
         ? 'SEM AC (Recolhimento)'
@@ -618,7 +1492,6 @@ export function parseMfxExcelFile(
         ? 'AC-2025/004115-2'
         : 'AC-2025/001482-9';
 
-    // Link items from PEDIDOS by PROCESSO or OC
     const matchingPedidos =
       pedidosByProc[id] ||
       pedidosByOC[oc] ||
@@ -634,12 +1507,14 @@ export function parseMfxExcelFile(
               id: `IT-${id}`,
               oc,
               processoId: id,
+              compradorResponsavel,
+              invoice: fatura,
               codigoItem: `OC-${oc}`,
               descricao: `Insumos & Equipamentos Importados — ${fornecedor} (${fatura || id})`,
               ncm: '8481.80.99',
               quantidade: 1,
               qtdAutorizadaAC: 100,
-              unidade: 'LOTE',
+              unidade: 'UN',
               valorUnitarioMoeda: valorFOBMoeda,
               valorTotalMoeda: valorFOBMoeda,
               moeda,
@@ -656,24 +1531,35 @@ export function parseMfxExcelFile(
     const cargaParadaDrawback =
       status === 'Parado Ag. Drawback' ||
       stripAccents(statusRawExcel.toUpperCase()).includes('DRAWBACK') ||
-      (Boolean(dataChegadaEfetiva) && !dataRegistroDI && !dataEntregaMFX && regime === 'Drawback Suspensão');
+      (Boolean(dataChegadaEfetiva) &&
+        !dataRegistroDI &&
+        !dataEntregaMFX &&
+        regime === 'Drawback Suspensão');
 
     const alertaPreAlertaAWB =
-      modal === 'AÉREO' && !dataEntregaMFX && (!numeroDiDuimp || numeroDiDuimp === 'Pendente Registro');
+      modal === 'AÉREO' &&
+      !dataEntregaMFX &&
+      (!numeroDiDuimp || numeroDiDuimp === 'Pendente Registro');
+
+    const blAwbCell = String(
+      getCell(row, ['BL / AWB', 'BL/AWB', 'CONHECIMENTO'], '')
+    ).trim();
 
     const partialProc: ImportProcess = {
       id,
+      compradorResponsavel,
       oc,
       commercialInvoice: fatura || 'S/ FATURA',
       fornecedor,
       paisOrigem:
-        fornecedor === 'KERUI'
-          ? 'China'
-          : fornecedor === 'BSP'
-          ? 'Alemanha'
-          : fornecedor === 'MID SUN'
-          ? 'Canadá'
-          : 'EUA',
+        String(getCell(row, ['ORIGEM', 'PAIS'], '')).trim().toUpperCase() ||
+        (fornecedor === 'KERUI'
+          ? 'CHINA'
+          : fornecedor === 'BSP' || fornecedor.includes('WALTHER') || fornecedor.includes('ACOTEQ')
+          ? 'ALEMANHA'
+          : fornecedor.includes('TRATOS')
+          ? 'ITALIA'
+          : 'EUA'),
       projeto,
       status: cargaParadaDrawback && status !== 'Entregue MFX' ? 'Parado Ag. Drawback' : status,
       statusRawExcel: statusRawExcel || status,
@@ -685,7 +1571,9 @@ export function parseMfxExcelFile(
       despachante: 'ÔMEGA',
       agenteCarga,
       armadorCiaAerea: modal === 'AÉREO' ? 'Cia Aérea Internacional' : 'Armador Marítimo',
-      blAwb: numeroDiDuimp !== 'Pendente Registro' ? `DI ${numeroDiDuimp}` : `REF-${id}`,
+      blAwb:
+        blAwbCell ||
+        (numeroDiDuimp !== 'Pendente Registro' ? `DI ${numeroDiDuimp}` : `REF-${id}`),
       numeroDiDuimp,
       canal,
       liAnuente: anuencia,
@@ -713,7 +1601,8 @@ export function parseMfxExcelFile(
         cargaParadaDrawback && !dataEntregaMFX
           ? `Aguardando liberação / vinculação de Ato Concessório (${defaultAC}) em ${localDesembaraco}`
           : undefined,
-      diasParadoPortoAeroporto: cargaParadaDrawback && !dataEntregaMFX ? Math.max(4, tempoDesembaracoDias) : 0,
+      diasParadoPortoAeroporto:
+        cargaParadaDrawback && !dataEntregaMFX ? Math.max(4, tempoDesembaracoDias) : 0,
       alertaPreAlertaAWB,
       atrasoEtaDias: diffDaysBetween(dataChegadaEfetiva, eta, 0),
       moeda,
@@ -760,7 +1649,7 @@ export function parseMfxExcelFile(
     parsedProcessos.push(partialProc);
   });
 
-  // 3. Also merge any unshipped POs from PEDIDOS that do not exist yet in PROCESSOS
+  // Merge any unshipped POs from PEDIDOS
   pedidosForecast.forEach((ped, idx) => {
     const hasMatchInProcessos = parsedProcessos.some(
       (p) =>
@@ -768,22 +1657,29 @@ export function parseMfxExcelFile(
         (ped.oc && (p.oc === ped.oc || p.oc.includes(ped.oc)))
     );
     if (!hasMatchInProcessos && ped.valor > 0) {
-      const id = ped.processo && !seenProcessIds.has(ped.processo)
-        ? ped.processo
-        : `PO-${ped.oc || idx + 1}`;
+      const id =
+        ped.processo && !seenProcessIds.has(ped.processo)
+          ? ped.processo
+          : `PO-${ped.oc || idx + 1}`;
       seenProcessIds.add(id);
 
-      const taxa = ptax[ped.moeda] || 5.7842;
+      const taxa = ped.moeda === 'BRL' ? 1 : ptax[ped.moeda as 'USD' | 'EUR' | 'CNY'] || 5.7842;
       const vmleBRL = ped.valor * taxa;
       const vmldBRL = vmleBRL * 1.05;
       const statusNorm = normalizeStatus(ped.status, '', '', '', '');
 
       const poProc: ImportProcess = {
         id,
+        compradorResponsavel: ped.compradorResponsavel || 'EUDE',
         oc: ped.oc,
         commercialInvoice: 'PO EM ABERTO',
         fornecedor: ped.fornecedor,
-        paisOrigem: ped.fornecedor === 'KERUI' ? 'China' : ped.fornecedor === 'BSP' ? 'Alemanha' : 'EUA',
+        paisOrigem:
+          ped.fornecedor === 'KERUI'
+            ? 'CHINA'
+            : ped.fornecedor === 'BSP'
+            ? 'ALEMANHA'
+            : 'EUA',
         projeto: ped.projeto,
         status: statusNorm === 'Em Trânsito' ? 'Em Produção Fornecedor' : statusNorm,
         statusRawExcel: ped.status,
@@ -877,28 +1773,90 @@ export function parseMfxExcelFile(
   return {
     processos: parsedProcessos,
     pedidosForecast,
-    pedidosCount: rawPedidos.length,
+    rawItems,
+    pedidosCount:
+      allLegacyPedidoRows.length > 0 ? allLegacyPedidoRows.length : parsedProcessos.length,
     sheetNames,
   };
 }
 
 // ============================================================================
-// F. EXPORT TO EXCEL IN EXACT FUP IMPORTAÇÃO BI_2.xlsx STRUCTURE
+// F. EXPORT TO EXCEL (INCLUDES MASTER FLAT ITEM SHEET + PROCESSOS + PEDIDOS)
 // ============================================================================
 
 export function exportMfxToExcel(
   processos: ImportProcess[],
   atosConcessorios: AtoConcessorio[],
   pedidosForecast: PedidoForecastRow[] = [],
-  filename = 'FUP_IMPORTACAO_BI_2_MFX_EXPORT.xlsx'
+  filename = 'FUP_IMPORTACAO_BI_MFX_EXPORT.xlsx'
 ) {
   const wb = XLSX.utils.book_new();
 
-  // 1. Sheet PROCESSOS (Matching the 36 columns + Title Banner on Row 1)
+  // 1. Sheet FUP_ITENS_MFX (Exact Real MFX Flat Item Table Col A - Col U)
+  const headersFlat = [
+    'STATUS',
+    'REF. MFX',
+    'COMPRADOR RESPONSAVEL',
+    'PO',
+    'FORNECEDOR',
+    'ORIGEM',
+    'INVOICE',
+    'COD. MATERIAL',
+    'DESCRIÇÃO',
+    'QTD',
+    'VALOR UNITÁRIO',
+    'VALOR TOTAL',
+    'UNIDADE DE MEDIDA',
+    'AGENTE DE CARGAS',
+    'BL / AWB',
+    'INCOTERMS',
+    'MODAL',
+    'DATA PRONTIDÃO CARGA',
+    'ETD',
+    'ETA',
+    'TT',
+  ];
+
+  const flatRows: any[][] = [];
+  processos.forEach((p) => {
+    p.itens.forEach((it) => {
+      const sym = it.moeda === 'EUR' ? '€ ' : it.moeda === 'BRL' ? 'R$ ' : '$ ';
+      flatRows.push([
+        it.statusItem || p.statusRawExcel || p.status,
+        p.id,
+        it.compradorResponsavel || p.compradorResponsavel || 'EUDE',
+        it.oc || p.oc,
+        it.fornecedor || p.fornecedor,
+        it.origem || p.paisOrigem,
+        it.invoice || p.commercialInvoice,
+        it.codigoItem,
+        it.descricao,
+        it.quantidade,
+        `${sym}${it.valorUnitarioMoeda.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`,
+        `${sym}${it.valorTotalMoeda.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`,
+        it.unidade,
+        p.agenteCarga,
+        p.blAwb,
+        p.incoterm,
+        p.modal,
+        it.previsaoProntidaoCarga || p.dataProntidaoCarga,
+        it.etd || p.etd,
+        it.eta || p.eta,
+        p.transitTimeDias,
+      ]);
+    });
+  });
+
+  const wsFlat = XLSX.utils.aoa_to_sheet([headersFlat, ...flatRows]);
+  XLSX.utils.book_append_sheet(wb, wsFlat, 'FUP IMPORTAÇÃO BI');
+
+  // 2. Sheet PROCESSOS (36 Consolidated Columns)
   const headersProcessos = [
     'PROJETO',
     'PROCESSO',
+    'COMPRADOR RESPONSAVEL',
     'EXPORTADOR',
+    'ORIGEM',
     'FATURA',
     'DATA DE VENCIMENTO',
     'OC',
@@ -912,6 +1870,7 @@ export function exportMfxToExcel(
     'FRETE PAGO R$',
     'SAVING FRETE',
     'AGENTE DE CARGA',
+    'BL / AWB',
     'EMBARQUE',
     'PREVISÃO CHEGADA',
     'CHEGADA',
@@ -937,7 +1896,9 @@ export function exportMfxToExcel(
   const dataRowsProcessos = processos.map((p) => [
     p.projeto,
     p.id,
+    p.compradorResponsavel || 'EUDE',
     p.fornecedor,
+    p.paisOrigem,
     p.commercialInvoice,
     p.dataVencimentoInvoice,
     p.oc,
@@ -951,6 +1912,7 @@ export function exportMfxToExcel(
     Math.round(p.fretePagoBRL),
     Math.round(p.savingFreteBRL),
     p.agenteCarga,
+    p.blAwb,
     p.etd,
     p.eta,
     p.dataChegadaEfetiva || '',
@@ -968,7 +1930,8 @@ export function exportMfxToExcel(
     p.transportadoraNacional,
     p.dataEntregaMFX || '',
     p.tempoEntregaRodoviariaDias,
-    p.leadTimeTotalDias ?? p.transitTimeDias + p.tempoDesembaracoDias + p.tempoEntregaRodoviariaDias,
+    p.leadTimeTotalDias ??
+      p.transitTimeDias + p.tempoDesembaracoDias + p.tempoEntregaRodoviariaDias,
     p.statusRawExcel || p.status,
     p.atoConcessorio,
   ]);
@@ -980,12 +1943,16 @@ export function exportMfxToExcel(
   ]);
   XLSX.utils.book_append_sheet(wb, wsProcessos, 'PROCESSOS');
 
-  // 2. Sheet PEDIDOS
+  // 3. Sheet PEDIDOS
   const headersPedidos = [
     'PROJETO',
     'PROCESSO',
+    'COMPRADOR RESPONSAVEL',
     'FORNECEDOR',
     'OC',
+    'COD. MATERIAL',
+    'DESCRIÇÃO',
+    'QTD',
     'EMISSÃO OC',
     'INCOTERM',
     'VALOR',
@@ -999,8 +1966,12 @@ export function exportMfxToExcel(
       ? pedidosForecast.map((pf) => [
           pf.projeto,
           pf.processo,
+          pf.compradorResponsavel || 'EUDE',
           pf.fornecedor,
           pf.oc,
+          pf.codMaterial || `OC-${pf.oc}`,
+          pf.descricao || `Pedido ${pf.oc}`,
+          pf.qtd || 1,
           pf.emissaoOC,
           pf.incoterm,
           pf.valor,
@@ -1011,8 +1982,12 @@ export function exportMfxToExcel(
       : processos.map((p) => [
           p.projeto,
           p.id,
+          p.compradorResponsavel || 'EUDE',
           p.fornecedor,
           p.oc,
+          p.itens[0]?.codigoItem || `OC-${p.oc}`,
+          p.itens[0]?.descricao || p.fornecedor,
+          p.itens[0]?.quantidade || 1,
           p.dataPO,
           p.incoterm,
           p.valorFOBMoeda,
@@ -1028,7 +2003,7 @@ export function exportMfxToExcel(
   ]);
   XLSX.utils.book_append_sheet(wb, wsPedidos, 'PEDIDOS');
 
-  // 3. Sheet ATOS_CONCESSORIOS
+  // 4. Sheet ATOS_CONCESSORIOS
   const rowsAC = atosConcessorios.map((ac) => ({
     'ATO CONCESSÓRIO': ac.id,
     'Nº SECEX': ac.numeroAC,

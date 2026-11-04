@@ -64,11 +64,11 @@ export const DashboardGrid: React.FC<DashboardGridProps> = ({
               </div>
               <div className="text-right shrink-0">
                 <span className="text-xs font-extrabold text-gray-800 dark:text-gray-200 block">
-                  {p.projeto}
+                  {p.compradorResponsavel ? `${p.compradorResponsavel} · ${p.projeto}` : p.projeto}
                 </span>
                 <span className="text-[11px] font-mono text-gray-500 dark:text-gray-400">
                   <i className={`fas ${p.modal === 'AÉREO' ? 'fa-plane text-sky-500' : 'fa-ship text-blue-500'} mr-1`}></i>
-                  {p.modal} · {p.incoterm}
+                  {p.modal} · {p.incoterm} · {p.agenteCarga}
                 </span>
               </div>
             </div>
@@ -144,9 +144,14 @@ export const DashboardGrid: React.FC<DashboardGridProps> = ({
                 </div>
               </div>
 
-              <div className="pt-2 border-t border-gray-100 dark:border-gray-700/60 text-[11px] text-gray-600 dark:text-gray-400 truncate">
-                <i className="fas fa-box-open mr-1.5 text-gray-400"></i>
-                {p.itens[0]?.descricao} (NCM {p.itens[0]?.ncm})
+              <div className="pt-2 border-t border-gray-100 dark:border-gray-700/60 text-[11px] text-gray-600 dark:text-gray-400 flex items-center justify-between gap-2">
+                <span className="truncate">
+                  <i className="fas fa-box-open mr-1.5 text-gray-400"></i>
+                  <strong>[{p.itens[0]?.codigoItem}]</strong> {p.itens[0]?.descricao}
+                </span>
+                <span className="font-mono font-bold text-blue-600 dark:text-blue-400 shrink-0">
+                  {p.itens.length} item(ns)
+                </span>
               </div>
             </div>
 
@@ -416,7 +421,13 @@ export const DashboardGrid: React.FC<DashboardGridProps> = ({
   // TAB 4: Fretes, Rodoviário & Saving (Freight & Trucking Savings)
   // ============================================================================
   if (activeTab === 4) {
-    const agentesList = ['DSV', 'DHL', 'KN', 'FEDEX', 'Hellmann'] as const;
+    const dynamicAgents = Array.from(
+      new Set(processos.map((p) => p.agenteCarga).filter(Boolean))
+    );
+    const agentesList =
+      dynamicAgents.length > 0
+        ? dynamicAgents
+        : ['CRONOS', 'CAPITAL', 'MSC', 'DSV', 'DHL', 'KN', 'FEDEX'];
     const agentSummaries = agentesList
       .map((ag) => {
         const list = processos.filter(

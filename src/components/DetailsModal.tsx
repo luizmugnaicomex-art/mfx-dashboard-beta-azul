@@ -352,13 +352,20 @@ export const DetailsModal: React.FC<DetailsModalProps> = ({
           <div>
             <div className="flex items-center gap-3 flex-wrap">
               <span className="text-lg font-extrabold font-mono text-blue-400">{p.id}</span>
-              <span className="text-sm font-semibold text-slate-300">· {p.oc}</span>
-              <span className="text-sm font-bold text-white">· {p.fornecedor}</span>
+              <span className="text-sm font-semibold text-slate-300">· PO: {p.oc}</span>
+              <span className="text-sm font-bold text-white">
+                · {p.fornecedor} ({p.paisOrigem})
+              </span>
+              {p.compradorResponsavel && (
+                <span className="text-xs font-mono text-emerald-300">
+                  · Comprador: {p.compradorResponsavel}
+                </span>
+              )}
               <span className="text-xs font-mono text-amber-300">· Projeto: {p.projeto}</span>
             </div>
             <p className="text-xs text-slate-300 mt-1">
-              Invoice: {p.commercialInvoice} · Modal: {p.modal} ({p.incoterm}) · BL/AWB: {p.blAwb} · Agente:{' '}
-              {p.agenteCarga} / Despachante: {p.despachante}
+              Invoice: {p.commercialInvoice} · Modal: {p.modal} ({p.incoterm}) · BL/AWB: {p.blAwb} ·
+              Agente: {p.agenteCarga} / Despachante: {p.despachante}
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -539,12 +546,12 @@ export const DetailsModal: React.FC<DetailsModalProps> = ({
                 </div>
               </div>
 
-              {/* Items Table from Aba PEDIDOS */}
+              {/* Items Table from MFX Master Sheet / PEDIDOS */}
               <div>
-                <h4 className="text-sm font-bold text-gray-800 dark:text-gray-100 mb-2.5 flex items-center justify-between">
+                <h4 className="text-sm font-bold text-gray-800 dark:text-gray-100 mb-2.5 flex items-center justify-between flex-wrap gap-2">
                   <span>
                     <i className="fas fa-boxes-stacked text-blue-600 mr-2"></i>
-                    Itens da Ordem de Compra ({p.oc} — Planilha PEDIDOS)
+                    Itens / Materiais do Processo ({p.id} — {p.itens.length} linha(s) · PO: {p.oc})
                   </span>
                   <span className="text-xs font-mono text-gray-500">
                     Moeda: {p.moeda} (PTAX R$ {p.taxaPtaxDI.toFixed(4)})
@@ -554,12 +561,13 @@ export const DetailsModal: React.FC<DetailsModalProps> = ({
                   <table className="w-full text-left border-collapse text-xs">
                     <thead className="bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 uppercase">
                       <tr>
-                        <th className="py-2.5 px-3">Código Item</th>
-                        <th className="py-2.5 px-3">Descrição Técnica</th>
-                        <th className="py-2.5 px-3">NCM Fatura</th>
-                        <th className="py-2.5 px-3">NCM no AC</th>
-                        <th className="py-2.5 px-3 text-right">Qtd PO</th>
-                        <th className="py-2.5 px-3 text-right">Qtd no AC</th>
+                        <th className="py-2.5 px-3">PO</th>
+                        <th className="py-2.5 px-3">Invoice</th>
+                        <th className="py-2.5 px-3">Cód. Material</th>
+                        <th className="py-2.5 px-3">Descrição do Material</th>
+                        <th className="py-2.5 px-3 text-right">Qtd</th>
+                        <th className="py-2.5 px-3">Unid.</th>
+                        <th className="py-2.5 px-3 text-right">Vlr Unit. ({p.moeda})</th>
                         <th className="py-2.5 px-3 text-right">Vlr Total ({p.moeda})</th>
                         <th className="py-2.5 px-3">Auditoria Laudo</th>
                       </tr>
@@ -575,19 +583,22 @@ export const DetailsModal: React.FC<DetailsModalProps> = ({
                             key={it.id}
                             className={isHigh ? 'row-risk-high' : isMed ? 'row-risk-medium' : ''}
                           >
-                            <td className="py-2.5 px-3 font-mono font-bold">{it.codigoItem}</td>
+                            <td className="py-2.5 px-3 font-mono font-semibold">
+                              {it.oc || p.oc}
+                            </td>
+                            <td className="py-2.5 px-3 font-mono">
+                              {it.invoice || p.commercialInvoice}
+                            </td>
+                            <td className="py-2.5 px-3 font-mono font-bold text-blue-600 dark:text-blue-400">
+                              {it.codigoItem}
+                            </td>
                             <td className="py-2.5 px-3 font-medium">{it.descricao}</td>
-                            <td className="py-2.5 px-3 font-mono font-semibold tabular-nums">{it.ncm}</td>
-                            <td className="py-2.5 px-3 font-mono tabular-nums">
-                              {it.ncmAtoConcessorio || it.ncm}
-                            </td>
                             <td className="py-2.5 px-3 text-right font-mono font-bold tabular-nums">
-                              {it.quantidade.toLocaleString('pt-BR')} {it.unidade}
+                              {it.quantidade.toLocaleString('pt-BR')}
                             </td>
+                            <td className="py-2.5 px-3 font-mono font-semibold">{it.unidade}</td>
                             <td className="py-2.5 px-3 text-right font-mono tabular-nums">
-                              {it.qtdAutorizadaAC !== undefined
-                                ? `${it.qtdAutorizadaAC.toLocaleString('pt-BR')} ${it.unidade}`
-                                : 'N/A'}
+                              {fmtCurr(it.valorUnitarioMoeda, it.moeda)}
                             </td>
                             <td className="py-2.5 px-3 text-right font-mono font-bold tabular-nums">
                               {fmtCurr(it.valorTotalMoeda, it.moeda)}

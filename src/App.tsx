@@ -55,10 +55,10 @@ const DEFAULT_VISIBLE_COLUMNS: Record<string, boolean> = {
 };
 
 const COLUMN_LABELS: Record<string, string> = {
-  processo: 'Processo (IMP-XXX)',
+  processo: 'REF. MFX / Processo',
   oc: 'Ordem de Compra (PO/OC)',
-  fornecedor: 'Fornecedor / Exportador',
-  projeto: 'Projeto (Petrobras/PRIO)',
+  fornecedor: 'Fornecedor / Origem',
+  projeto: 'Comprador / Projeto',
   status: 'Status Operacional',
   modal: 'Modal & Incoterm',
   blAwb: 'BL / AWB & DI',
@@ -84,9 +84,9 @@ export default function App() {
   const [atosConcessorios, setAtosConcessorios] = useState<AtoConcessorio[]>(ATOS_CONCESSORIOS_MFX);
   const [ptax] = useState<PtaxRates>(INITIAL_PTAX);
   const [sourceFileName, setSourceFileName] = useState<string>(
-    'FUP IMPORTAÇÃO BI_2.xlsx (Abas PROCESSOS & PEDIDOS)'
+    'FUP IMPORTAÇÃO BI (REF. MFX, POs & MATERIAIS)'
   );
-  const [lastUpdatedTime, setLastUpdatedTime] = useState<string>('03/11/2026 17:40');
+  const [lastUpdatedTime, setLastUpdatedTime] = useState<string>('03/11/2026 18:05');
 
   const [darkMode, setDarkMode] = useState<boolean>(false);
   const [lang, setLang] = useState<LanguageCode>('pt');
@@ -146,25 +146,84 @@ export default function App() {
     }
   }, [selectedProcess, selectedAC]);
 
-  // Dynamic options for multi-select boxes
-  const availablePOs = useMemo(
-    () => Array.from(new Set(processos.map((p) => p.oc))).sort(),
-    [processos]
-  );
-  const availableSuppliers = useMemo(
-    () => Array.from(new Set(processos.map((p) => p.fornecedor))).sort(),
-    [processos]
-  );
+  // Dynamic options for the 7 multi-select filter boxes
+  const availablePOs = useMemo(() => {
+    const set = new Set<string>();
+    processos.forEach((p) => {
+      if (p.id) set.add(p.id);
+      if (p.oc) set.add(p.oc);
+      p.posList?.forEach((po) => set.add(po));
+      p.itens.forEach((it) => {
+        if (it.oc) set.add(it.oc);
+      });
+    });
+    return Array.from(set);
+  }, [processos]);
+
+  const availableBuyersProjects = useMemo(() => {
+    const set = new Set<string>(['EUDE', 'BEATRIZ SANTANA', 'GUSTAVO']);
+    processos.forEach((p) => {
+      if (p.compradorResponsavel) set.add(p.compradorResponsavel);
+      if (p.projeto) set.add(p.projeto);
+      p.itens.forEach((it) => {
+        if (it.compradorResponsavel) set.add(it.compradorResponsavel);
+      });
+    });
+    ['PETROBRAS', 'PRIO', 'ESTOQUE', 'EXPANSÃO 140 CNTR'].forEach((proj) => set.add(proj));
+    return Array.from(set);
+  }, [processos]);
+
+  const availableStatuses = useMemo(() => {
+    const set = new Set<string>([
+      'Entregue MFX',
+      'Em Trânsito',
+      'Ag. Embarque',
+      'Parado Ag. Drawback',
+      'No Porto/Aeroporto',
+      'Desembaraçado',
+      'Em Produção Fornecedor',
+    ]);
+    processos.forEach((p) => {
+      if (p.status) set.add(p.status);
+    });
+    return Array.from(set);
+  }, [processos]);
+
+  const availableModalsIncoterms = useMemo(() => {
+    const set = new Set<string>(['AÉREO', 'MARÍTIMO', 'EXW', 'FCA', 'CFR', 'FOB', 'CIF', 'CPT', 'DAP']);
+    processos.forEach((p) => {
+      if (p.modal) set.add(p.modal);
+      if (p.incoterm) set.add(p.incoterm);
+    });
+    return Array.from(set);
+  }, [processos]);
+
+  const availableSuppliers = useMemo(() => {
+    const set = new Set<string>();
+    processos.forEach((p) => {
+      if (p.fornecedor) set.add(p.fornecedor);
+    });
+    return Array.from(set);
+  }, [processos]);
+
+  const availableAgents = useMemo(() => {
+    const set = new Set<string>(['CRONOS', 'CAPITAL', 'MSC', 'DSV', 'DHL', 'KN', 'FEDEX', 'ÔMEGA']);
+    processos.forEach((p) => {
+      if (p.agenteCarga) set.add(p.agenteCarga);
+    });
+    return Array.from(set);
+  }, [processos]);
+
   const availableACs = useMemo(
     () => atosConcessorios.map((ac) => ac.id),
     [atosConcessorios]
   );
 
-  // Filtered Processes (Accurate multi-dimensional filtering)
+  // Filtered Processes (Accurate multi-dimensional filtering across REF. MFX, PO, Buyer, Supplier, Material Code, BL/AWB)
   const filteredProcessos = useMemo(() => {
     const f = filters;
 
-    const modalOptions = ['MARÍTIMO', 'AÉREO'];
+    const modalOptions = ['MARÍTIMO', 'AÉREO', 'RODOVIÁRIO'];
     const selectedModals = f.modalIncoterm.filter((x) => modalOptions.includes(x));
     const selectedIncoterms = f.modalIncoterm.filter((x) => !modalOptions.includes(x));
 
@@ -177,8 +236,30 @@ export default function App() {
     const selectedForwarders = f.agentes.filter((x) => !despOptions.includes(x));
 
     return processos.filter((p) => {
-      if (f.pos.length > 0 && !f.pos.includes(p.oc)) return false;
-      if (f.projetos.length > 0 && !f.projetos.includes(p.projeto)) return false;
+      if (f.pos.length > 0) {
+        const matchPOOrRef = f.pos.some(
+          (sel) =>
+            p.id === sel ||
+            p.oc === sel ||
+            p.oc.includes(sel) ||
+            p.posList?.includes(sel) ||
+            p.itens.some((it) => it.oc === sel)
+        );
+        if (!matchPOOrRef) return false;
+      }
+
+      if (f.projetos.length > 0) {
+        const matchBuyerOrProject = f.projetos.some(
+          (sel) =>
+            p.projeto.toUpperCase() === sel.toUpperCase() ||
+            (p.compradorResponsavel || '').toUpperCase() === sel.toUpperCase() ||
+            p.itens.some(
+              (it) => (it.compradorResponsavel || '').toUpperCase() === sel.toUpperCase()
+            )
+        );
+        if (!matchBuyerOrProject) return false;
+      }
+
       if (f.status.length > 0 && !f.status.includes(p.status)) return false;
 
       if (selectedModals.length > 0 && !selectedModals.includes(p.modal)) return false;
@@ -194,7 +275,11 @@ export default function App() {
 
       if (
         f.fornecedores.length > 0 &&
-        !f.fornecedores.some((sup) => sup.toUpperCase() === p.fornecedor.toUpperCase())
+        !f.fornecedores.some(
+          (sup) =>
+            sup.toUpperCase() === p.fornecedor.toUpperCase() ||
+            sup.toUpperCase() === p.paisOrigem.toUpperCase()
+        )
       ) {
         return false;
       }
@@ -212,26 +297,44 @@ export default function App() {
         return false;
       }
 
-      if (
-        f.searchPO.trim() &&
-        !p.oc.toLowerCase().includes(f.searchPO.trim().toLowerCase()) &&
-        !p.commercialInvoice.toLowerCase().includes(f.searchPO.trim().toLowerCase())
-      ) {
-        return false;
+      // Quick search 1: PO, Invoice, COD. MATERIAL (e.g. 2100000290), or Material Description
+      if (f.searchPO.trim()) {
+        const q = f.searchPO.trim().toLowerCase();
+        const matchSearch1 =
+          p.oc.toLowerCase().includes(q) ||
+          p.commercialInvoice.toLowerCase().includes(q) ||
+          p.id.toLowerCase().includes(q) ||
+          p.itens.some(
+            (it) =>
+              it.codigoItem.toLowerCase().includes(q) ||
+              it.descricao.toLowerCase().includes(q) ||
+              (it.oc || '').toLowerCase().includes(q) ||
+              (it.invoice || '').toLowerCase().includes(q)
+          );
+        if (!matchSearch1) return false;
       }
-      if (
-        f.searchProcesso.trim() &&
-        !p.id.toLowerCase().includes(f.searchProcesso.trim().toLowerCase())
-      ) {
-        return false;
+
+      // Quick search 2: REF. MFX / Processo / Comprador / Fornecedor
+      if (f.searchProcesso.trim()) {
+        const q = f.searchProcesso.trim().toLowerCase();
+        const matchSearch2 =
+          p.id.toLowerCase().includes(q) ||
+          (p.compradorResponsavel || '').toLowerCase().includes(q) ||
+          p.fornecedor.toLowerCase().includes(q) ||
+          p.oc.toLowerCase().includes(q);
+        if (!matchSearch2) return false;
       }
-      if (
-        f.searchBlDi.trim() &&
-        !p.blAwb.toLowerCase().includes(f.searchBlDi.trim().toLowerCase()) &&
-        !p.numeroDiDuimp.toLowerCase().includes(f.searchBlDi.trim().toLowerCase())
-      ) {
-        return false;
+
+      // Quick search 3: BL / AWB / DI / Agente
+      if (f.searchBlDi.trim()) {
+        const q = f.searchBlDi.trim().toLowerCase();
+        const matchSearch3 =
+          p.blAwb.toLowerCase().includes(q) ||
+          p.numeroDiDuimp.toLowerCase().includes(q) ||
+          p.agenteCarga.toLowerCase().includes(q);
+        if (!matchSearch3) return false;
       }
+
       if (f.etaStart && p.eta < f.etaStart) return false;
       if (f.etaEnd && p.eta > f.etaEnd) return false;
       if (f.cashflowStart && p.dataVencimentoInvoice < f.cashflowStart) return false;
@@ -241,14 +344,13 @@ export default function App() {
     });
   }, [processos, filters]);
 
-  // Filtered Atos Concessórios (Reactive to project, AC, or process filters on Tab 5 & Tab 6)
+  // Filtered Atos Concessórios
   const filteredAtosConcessorios = useMemo(() => {
     const f = filters;
     const regimeOptions = ['Drawback Suspensão', 'Recolhimento Integral', 'Ex-Tarifário'];
     const selectedACs = f.regimeAC.filter((x) => !regimeOptions.includes(x));
 
     return atosConcessorios.filter((ac) => {
-      if (f.projetos.length > 0 && !f.projetos.includes(ac.projetoVinculado)) return false;
       if (selectedACs.length > 0 && !selectedACs.includes(ac.id)) return false;
       if (
         f.pos.length > 0 ||
@@ -337,19 +439,34 @@ export default function App() {
           setPedidosForecast(
             parsed.pedidosForecast.length > 0
               ? parsed.pedidosForecast
-              : parsed.processos.map((p, i) => ({
-                  id: `PED-UP-${i + 1}`,
-                  projeto: p.projeto,
-                  processo: p.id,
-                  fornecedor: p.fornecedor,
-                  oc: p.oc,
-                  emissaoOC: p.dataPO,
-                  incoterm: p.incoterm,
-                  valor: p.valorFOBMoeda,
-                  moeda: p.moeda,
-                  prontidaoCarga: p.dataProntidaoCarga,
-                  status: p.statusRawExcel || p.status,
-                }))
+              : parsed.processos.flatMap((p) =>
+                  p.itens.map((it, i) => ({
+                    id: `PED-UP-${p.id}-${i + 1}`,
+                    projeto: p.projeto,
+                    processo: p.id,
+                    compradorResponsavel:
+                      it.compradorResponsavel || p.compradorResponsavel || 'EUDE',
+                    fornecedor: it.fornecedor || p.fornecedor,
+                    origem: it.origem || p.paisOrigem,
+                    oc: it.oc || p.oc,
+                    codMaterial: it.codigoItem,
+                    descricao: it.descricao,
+                    qtd: it.quantidade,
+                    unidadeMedida: it.unidade,
+                    emissaoOC: it.dataEmissaoPO || p.dataPO,
+                    incoterm: p.incoterm,
+                    valorUnitario: it.valorUnitarioMoeda,
+                    valor: it.valorTotalMoeda,
+                    moeda: it.moeda,
+                    prontidaoCarga: it.previsaoProntidaoCarga || p.dataProntidaoCarga,
+                    etd: it.etd || p.etd,
+                    eta: it.eta || p.eta,
+                    agenteCargas: p.agenteCarga,
+                    blAwb: p.blAwb,
+                    modal: p.modal,
+                    status: it.statusItem || p.statusRawExcel || p.status,
+                  }))
+                )
           );
           setFilters(INITIAL_FILTERS);
           setSourceFileName(`${fileName} (Abas: ${parsed.sheetNames.join(', ')})`);
@@ -362,13 +479,13 @@ export default function App() {
           );
           addToast(
             `Arquivo ${fileName} carregado com sucesso!`,
-            `${parsed.processos.length} processos e ${parsed.pedidosCount} pedidos sincronizados.`,
+            `${parsed.processos.length} processos (REF. MFX) e ${parsed.pedidosCount} itens/POs sincronizados.`,
             'success'
           );
         } else {
           addToast(
             'Planilha sem linhas válidas',
-            'Verifique se o arquivo XLSX possui as abas PROCESSOS ou PEDIDOS preenchidas.',
+            'Verifique se o arquivo XLSX possui dados preenchidos.',
             'warning'
           );
         }
@@ -391,7 +508,7 @@ export default function App() {
     setPedidosForecast(PEDIDOS_FORECAST_MFX);
     setAtosConcessorios(ATOS_CONCESSORIOS_MFX);
     setFilters(INITIAL_FILTERS);
-    setSourceFileName('FUP IMPORTAÇÃO BI_2.xlsx (Dados Reais MFX — PROCESSOS & PEDIDOS)');
+    setSourceFileName('FUP IMPORTAÇÃO BI (Dados Reais MFX — REF. MFX, POs & MATERIAIS)');
     const now = new Date();
     setLastUpdatedTime(
       `${now.toLocaleDateString('pt-BR')} ${now.toLocaleTimeString('pt-BR', {
@@ -400,8 +517,8 @@ export default function App() {
       })}`
     );
     addToast(
-      'Dados MFX (FUP IMPORTAÇÃO BI_2.xlsx) Carregados!',
-      `${PROCESSOS_MFX.length} processos (IMP-113/25 e IMP-001/26 a IMP-015/26) e ${PEDIDOS_FORECAST_MFX.length} pedidos sincronizados.`,
+      'Dados Reais MFX Carregados!',
+      `${PROCESSOS_MFX.length} processos (MFX00040/26, MFX00052/26, MFX-00001/25, MFX-00002/25 + IMP) e ${PEDIDOS_FORECAST_MFX.length} itens sincronizados.`,
       'success'
     );
   };
@@ -411,11 +528,11 @@ export default function App() {
       filteredProcessos,
       filteredAtosConcessorios,
       pedidosForecast,
-      'FUP_IMPORTACAO_BI_2_MFX_CONSOLIDADO.xlsx'
+      'FUP_IMPORTACAO_BI_MFX_CONSOLIDADO.xlsx'
     );
     addToast(
       'Planilha Exportada (.XLSX)',
-      `O arquivo FUP_IMPORTACAO_BI_2_MFX_CONSOLIDADO.xlsx contendo as 36 colunas de PROCESSOS, PEDIDOS e ATOS_CONCESSORIOS foi gerado.`,
+      `O arquivo FUP_IMPORTACAO_BI_MFX_CONSOLIDADO.xlsx contendo a Planilha Geral de Itens (REF. MFX / PO / COD. MATERIAL), PROCESSOS e PEDIDOS foi gerado.`,
       'success'
     );
   };
@@ -785,7 +902,11 @@ export default function App() {
           addToast('Filtros Limpos', 'Todos os filtros foram redefinidos.', 'info');
         }}
         availablePOs={availablePOs}
+        availableBuyersProjects={availableBuyersProjects}
+        availableStatuses={availableStatuses}
+        availableModalsIncoterms={availableModalsIncoterms}
         availableSuppliers={availableSuppliers}
+        availableAgents={availableAgents}
         availableACs={availableACs}
         visibleColumns={visibleColumns}
         onToggleColumn={(colKey) =>

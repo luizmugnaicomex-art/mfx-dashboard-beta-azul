@@ -8,7 +8,11 @@ interface FilterPanelProps {
   onApplyFilters: () => void;
   onClearFilters: () => void;
   availablePOs: string[];
+  availableBuyersProjects: string[];
+  availableStatuses: string[];
+  availableModalsIncoterms: string[];
   availableSuppliers: string[];
+  availableAgents: string[];
   availableACs: string[];
   visibleColumns: Record<string, boolean>;
   onToggleColumn: (colKey: string) => void;
@@ -25,7 +29,11 @@ export const FilterPanel: React.FC<FilterPanelProps> = ({
   onApplyFilters,
   onClearFilters,
   availablePOs,
+  availableBuyersProjects,
+  availableStatuses,
+  availableModalsIncoterms,
   availableSuppliers,
+  availableAgents,
   availableACs,
   visibleColumns,
   onToggleColumn,
@@ -130,7 +138,7 @@ export const FilterPanel: React.FC<FilterPanelProps> = ({
         <div className="flex items-center gap-3 flex-wrap">
           <h2 className="text-sm font-extrabold text-gray-800 dark:text-gray-100 flex items-center gap-2">
             <i className="fas fa-sliders text-blue-600"></i>
-            PAINEL DE FILTROS MULTIDIMENSIONAL — MFX COMEX (PROCESSOS & PEDIDOS)
+            PAINEL DE FILTROS MULTIDIMENSIONAL — MFX COMEX (REF. MFX, POs, COMPRADORES & MATERIAIS)
           </h2>
           <span className="text-xs font-mono font-semibold text-gray-500 dark:text-gray-400 tabular-nums">
             · Exibindo <strong className="text-blue-600 dark:text-blue-400">{filteredCount}</strong> de{' '}
@@ -157,46 +165,37 @@ export const FilterPanel: React.FC<FilterPanelProps> = ({
           {/* ROW 1: 7 Multi-Select Boxes */}
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-3 mb-4">
             {renderMultiSelectBox(t.filterPOs, 'fa-file-invoice', 'pos', availablePOs)}
-            {renderMultiSelectBox(t.filterProjects, 'fa-oil-well', 'projetos', [
-              'PETROBRAS',
-              'PRIO',
-              'ESTOQUE',
-              'EXPANSÃO 140 CNTR',
-            ])}
-            {renderMultiSelectBox(t.filterStatus, 'fa-bars-progress', 'status', [
-              'Em Produção Fornecedor',
-              'Ag. Embarque',
-              'Em Trânsito',
-              'No Porto/Aeroporto',
-              'Parado Ag. Drawback',
-              'Desembaraçado',
-              'Entregue MFX',
-            ])}
-            {renderMultiSelectBox(t.filterModalIncoterm, 'fa-ship', 'modalIncoterm', [
-              'MARÍTIMO',
-              'AÉREO',
-              'FCA',
-              'FOB',
-              'CIF',
-              'EXW',
-              'CPT',
-              'DAP',
-            ])}
+            {renderMultiSelectBox(
+              t.filterProjects,
+              'fa-user-check',
+              'projetos',
+              availableBuyersProjects
+            )}
+            {renderMultiSelectBox(
+              t.filterStatus,
+              'fa-bars-progress',
+              'status',
+              availableStatuses
+            )}
+            {renderMultiSelectBox(
+              t.filterModalIncoterm,
+              'fa-ship',
+              'modalIncoterm',
+              availableModalsIncoterms
+            )}
             {renderMultiSelectBox(t.filterRegimeAC, 'fa-shield-halved', 'regimeAC', [
               'Drawback Suspensão',
               'Recolhimento Integral',
               'Ex-Tarifário',
               ...availableACs,
             ])}
-            {renderMultiSelectBox(t.filterSupplier, 'fa-industry', 'fornecedores', availableSuppliers)}
-            {renderMultiSelectBox(t.filterBroker, 'fa-user-tie', 'agentes', [
-              'ÔMEGA',
-              'DSV',
-              'DHL',
-              'KN',
-              'FEDEX',
-              'Hellmann',
-            ])}
+            {renderMultiSelectBox(
+              t.filterSupplier,
+              'fa-industry',
+              'fornecedores',
+              availableSuppliers
+            )}
+            {renderMultiSelectBox(t.filterBroker, 'fa-user-tie', 'agentes', availableAgents)}
           </div>
 
           {/* ROW 2: Quick Search Inputs */}
@@ -293,13 +292,17 @@ export const FilterPanel: React.FC<FilterPanelProps> = ({
                   <input
                     type="date"
                     value={filters.cashflowStart}
-                    onChange={(e) => setFilters((prev) => ({ ...prev, cashflowStart: e.target.value }))}
+                    onChange={(e) =>
+                      setFilters((prev) => ({ ...prev, cashflowStart: e.target.value }))
+                    }
                     className="px-2.5 py-1.5 text-xs rounded-md border border-gray-300 dark:border-[#374151] bg-white dark:bg-[#111827] text-gray-800 dark:text-gray-100 tabular-nums"
                   />
                   <input
                     type="date"
                     value={filters.cashflowEnd}
-                    onChange={(e) => setFilters((prev) => ({ ...prev, cashflowEnd: e.target.value }))}
+                    onChange={(e) =>
+                      setFilters((prev) => ({ ...prev, cashflowEnd: e.target.value }))
+                    }
                     className="px-2.5 py-1.5 text-xs rounded-md border border-gray-300 dark:border-[#374151] bg-white dark:bg-[#111827] text-gray-800 dark:text-gray-100 tabular-nums"
                   />
                 </div>
@@ -362,7 +365,9 @@ export const FilterPanel: React.FC<FilterPanelProps> = ({
                           >
                             <i
                               className={`${
-                                checked ? 'fas fa-square-check text-teal-600' : 'far fa-square text-gray-400'
+                                checked
+                                  ? 'fas fa-square-check text-teal-600'
+                                  : 'far fa-square text-gray-400'
                               }`}
                             ></i>
                             <span>{label}</span>
@@ -386,6 +391,64 @@ export const FilterPanel: React.FC<FilterPanelProps> = ({
               onClick={() =>
                 setFilters((prev) => ({
                   ...prev,
+                  projetos:
+                    prev.projetos.length === 1 && prev.projetos[0] === 'EUDE' ? [] : ['EUDE'],
+                }))
+              }
+              className={`px-2.5 py-1 rounded text-[11px] font-bold transition-colors cursor-pointer ${
+                filters.projetos.includes('EUDE') && filters.projetos.length === 1
+                  ? 'bg-indigo-600 text-white'
+                  : 'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-200'
+              }`}
+            >
+              Comprador: EUDE
+            </button>
+
+            <button
+              type="button"
+              onClick={() =>
+                setFilters((prev) => ({
+                  ...prev,
+                  projetos:
+                    prev.projetos.length === 1 && prev.projetos[0] === 'BEATRIZ SANTANA'
+                      ? []
+                      : ['BEATRIZ SANTANA'],
+                }))
+              }
+              className={`px-2.5 py-1 rounded text-[11px] font-bold transition-colors cursor-pointer ${
+                filters.projetos.includes('BEATRIZ SANTANA') && filters.projetos.length === 1
+                  ? 'bg-indigo-600 text-white'
+                  : 'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-200'
+              }`}
+            >
+              Comprador: BEATRIZ SANTANA
+            </button>
+
+            <button
+              type="button"
+              onClick={() =>
+                setFilters((prev) => ({
+                  ...prev,
+                  projetos:
+                    prev.projetos.length === 1 && prev.projetos[0] === 'GUSTAVO'
+                      ? []
+                      : ['GUSTAVO'],
+                }))
+              }
+              className={`px-2.5 py-1 rounded text-[11px] font-bold transition-colors cursor-pointer ${
+                filters.projetos.includes('GUSTAVO') && filters.projetos.length === 1
+                  ? 'bg-indigo-600 text-white'
+                  : 'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-200'
+              }`}
+            >
+              Comprador: GUSTAVO
+            </button>
+
+            <button
+              type="button"
+              onClick={() =>
+                setFilters((prev) => ({
+                  ...prev,
                   status:
                     prev.status.length === 1 && prev.status[0] === 'Parado Ag. Drawback'
                       ? []
@@ -398,7 +461,7 @@ export const FilterPanel: React.FC<FilterPanelProps> = ({
                   : 'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-200'
               }`}
             >
-              9 Cargas Paradas (Drawback)
+              Cargas Paradas (Drawback)
             </button>
 
             <button
@@ -418,7 +481,7 @@ export const FilterPanel: React.FC<FilterPanelProps> = ({
                   : 'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-200'
               }`}
             >
-              Embarques Aéreos (TECA)
+              Embarques Aéreos
             </button>
 
             <button
@@ -426,59 +489,21 @@ export const FilterPanel: React.FC<FilterPanelProps> = ({
               onClick={() =>
                 setFilters((prev) => ({
                   ...prev,
-                  regimeAC:
-                    prev.regimeAC.length === 1 && prev.regimeAC[0] === 'Recolhimento Integral'
+                  fornecedores:
+                    prev.fornecedores.length === 1 &&
+                    prev.fornecedores[0] === 'WALTHER PRAZISION'
                       ? []
-                      : ['Recolhimento Integral'],
+                      : ['WALTHER PRAZISION'],
                 }))
               }
               className={`px-2.5 py-1 rounded text-[11px] font-bold transition-colors cursor-pointer ${
-                filters.regimeAC.includes('Recolhimento Integral') && filters.regimeAC.length === 1
-                  ? 'bg-amber-600 text-white'
-                  : 'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-200'
-              }`}
-            >
-              Recolhimento Integral (Auditoria Vazamento)
-            </button>
-
-            <button
-              type="button"
-              onClick={() =>
-                setFilters((prev) => ({
-                  ...prev,
-                  projetos:
-                    prev.projetos.length === 1 && prev.projetos[0] === 'EXPANSÃO 140 CNTR'
-                      ? []
-                      : ['EXPANSÃO 140 CNTR'],
-                }))
-              }
-              className={`px-2.5 py-1 rounded text-[11px] font-bold transition-colors cursor-pointer ${
-                filters.projetos.includes('EXPANSÃO 140 CNTR') && filters.projetos.length === 1
-                  ? 'bg-purple-600 text-white'
-                  : 'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-200'
-              }`}
-            >
-              Projeto Expansão 140 CNTR
-            </button>
-
-            <button
-              type="button"
-              onClick={() =>
-                setFilters((prev) => ({
-                  ...prev,
-                  projetos:
-                    prev.projetos.length === 1 && prev.projetos[0] === 'PETROBRAS'
-                      ? []
-                      : ['PETROBRAS'],
-                }))
-              }
-              className={`px-2.5 py-1 rounded text-[11px] font-bold transition-colors cursor-pointer ${
-                filters.projetos.includes('PETROBRAS') && filters.projetos.length === 1
+                filters.fornecedores.includes('WALTHER PRAZISION') &&
+                filters.fornecedores.length === 1
                   ? 'bg-blue-600 text-white'
                   : 'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-200'
               }`}
             >
-              Projeto PETROBRAS
+              WALTHER PRAZISION
             </button>
 
             <button
@@ -486,17 +511,19 @@ export const FilterPanel: React.FC<FilterPanelProps> = ({
               onClick={() =>
                 setFilters((prev) => ({
                   ...prev,
-                  projetos:
-                    prev.projetos.length === 1 && prev.projetos[0] === 'PRIO' ? [] : ['PRIO'],
+                  fornecedores:
+                    prev.fornecedores.length === 1 && prev.fornecedores[0] === 'TRATOS'
+                      ? []
+                      : ['TRATOS'],
                 }))
               }
               className={`px-2.5 py-1 rounded text-[11px] font-bold transition-colors cursor-pointer ${
-                filters.projetos.includes('PRIO') && filters.projetos.length === 1
+                filters.fornecedores.includes('TRATOS') && filters.fornecedores.length === 1
                   ? 'bg-teal-600 text-white'
                   : 'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-200'
               }`}
             >
-              Projeto PRIO
+              TRATOS (ITALIA)
             </button>
           </div>
         </>

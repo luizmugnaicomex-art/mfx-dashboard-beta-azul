@@ -12,9 +12,9 @@ export type ProcessStatus =
   | 'Entregue MFX'
   | string;
 
-export type ModalType = 'MARÍTIMO' | 'AÉREO';
+export type ModalType = 'MARÍTIMO' | 'AÉREO' | 'RODOVIÁRIO' | string;
 
-export type IncotermType = 'FCA' | 'FOB' | 'CIF' | 'EXW' | 'CPT' | 'DAP' | string;
+export type IncotermType = 'FCA' | 'FOB' | 'CIF' | 'CFR' | 'EXW' | 'CPT' | 'DAP' | 'DDP' | string;
 
 export type RegimeTributario =
   | 'Drawback Suspensão'
@@ -24,40 +24,85 @@ export type RegimeTributario =
 
 export type CanalAduaneiro = 'Verde' | 'Amarelo' | 'Vermelho' | 'Pendente Registro' | string;
 
-export type CurrencyCode = 'USD' | 'EUR' | 'CNY';
+export type CurrencyCode = 'USD' | 'EUR' | 'CNY' | 'BRL';
+
+export interface MfxRawItemRow {
+  id: string;
+  status: string;
+  refMfx: string;
+  compradorResponsavel: string;
+  po: string;
+  fornecedor: string;
+  origem: string;
+  invoice: string;
+  codMaterial: string;
+  descricao: string;
+  qtd: number;
+  valorUnitario: number;
+  valorTotal: number;
+  moeda: CurrencyCode;
+  unidadeMedida: string;
+  agenteCargas: string;
+  blAwb: string;
+  incoterm: string;
+  modal: string;
+  dataProntidaoCarga: string;
+  etd: string;
+  eta: string;
+  transitTimeDias: number;
+  projeto: string;
+  atoConcessorio?: string;
+}
 
 export interface PedidoForecastRow {
   id: string;
   projeto: string;
   processo: string;
+  compradorResponsavel?: string;
   fornecedor: string;
+  origem?: string;
   oc: string;
+  codMaterial?: string;
+  descricao?: string;
+  qtd?: number;
+  unidadeMedida?: string;
   emissaoOC: string;
   incoterm: string;
+  valorUnitario?: number;
   valor: number;
   moeda: CurrencyCode;
   prontidaoCarga: string;
+  etd?: string;
+  eta?: string;
+  agenteCargas?: string;
+  blAwb?: string;
+  modal?: string;
   status: string;
 }
 
 export interface PedidoItem {
   id: string;
-  oc: string; // Purchase Order from PEDIDOS
-  processoId: string; // Linked IMP-XXX/26
-  codigoItem: string;
-  descricao: string;
+  oc: string; // Purchase Order (PO)
+  processoId: string; // Linked REF. MFX / Processo
+  compradorResponsavel?: string;
+  invoice?: string;
+  codigoItem: string; // COD. MATERIAL
+  descricao: string; // DESCRIÇÃO
   ncm: string;
   ncmAtoConcessorio?: string; // If divergent in AC
-  quantidade: number;
+  quantidade: number; // QTD
   qtdAutorizadaAC?: number; // e.g., 0.01 when Laudo Técnico error occurs
-  unidade: string;
-  valorUnitarioMoeda: number;
-  valorTotalMoeda: number;
+  unidade: string; // UNIDADE DE MEDIDA
+  valorUnitarioMoeda: number; // VALOR UNITÁRIO
+  valorTotalMoeda: number; // VALOR TOTAL
   moeda: CurrencyCode;
   fornecedor: string;
+  origem?: string;
   projeto: string;
   dataEmissaoPO: string;
   previsaoProntidaoCarga: string;
+  etd?: string;
+  eta?: string;
   statusItem: string;
   alertaLaudoTecnico?:
     | 'OK'
@@ -96,42 +141,45 @@ export interface AtoConcessorio {
   exportadoRealizadoUSD: number;
   totalItensCadastrados: number;
   itensComDivergenciaLaudo: number;
-  processosVinculados: string[]; // IMP-XXX/26
+  processosVinculados: string[]; // REF. MFX / IMP-XXX/26
   cargasParadasAguardando: number;
   itensDetalhados: AtoConcessorioItem[];
   riscoAC: RiskLevel;
 }
 
 export interface ImportProcess {
-  id: string; // PROCESSO (e.g. "IMP-113/25", "IMP-001/26" ... "IMP-015/26")
-  oc: string; // OC (e.g. "008074/008161")
-  commercialInvoice: string; // FATURA
-  fornecedor: string; // EXPORTADOR / FORNECEDOR
-  paisOrigem: string;
+  id: string; // REF. MFX / PROCESSO (e.g. "MFX00040/26", "MFX00052/26", "MFX-00001/25")
+  compradorResponsavel?: string; // COMPRADOR RESPONSAVEL (e.g. "EUDE", "BEATRIZ SANTANA", "GUSTAVO")
+  oc: string; // PO / OC (e.g. "6000000015, 6000000019")
+  posList?: string[]; // Individual POs inside this process
+  commercialInvoice: string; // INVOICE / FATURA (e.g. "87267, 87333")
+  invoicesList?: string[]; // Individual Invoices inside this process
+  fornecedor: string; // FORNECEDOR / EXPORTADOR
+  paisOrigem: string; // ORIGEM (e.g. "ALEMANHA", "ITALIA")
   projeto: string; // PROJETO (PETROBRAS, PRIO, ESTOQUE)
   status: string; // Normalized status for filters/charts
   statusRawExcel?: string; // Original STATUS text from Excel
   modal: ModalType; // MODAL (MARÍTIMO or AÉREO)
-  incoterm: string; // INCOTERM (FCA, FOB, CIF, EXW, CPT, DAP)
+  incoterm: string; // INCOTERMS (EXW, FCA, CFR, FOB, CIF, CPT, DAP)
   regime: string; // Normalized regime (Drawback Suspensão, Recolhimento Integral, Ex-Tarifário)
   beneficioRaw?: string; // BENEFÍCIO from Excel (DRAWBACK, RECOLHIMENTO INTEGRAL, EX-TARIFÁRIO)
   atoConcessorio: string; // Linked AC ID
   despachante: string; // ÔMEGA
-  agenteCarga: string; // AGENTE DE CARGA (DSV, DHL, KN, FEDEX, HELLMANN)
+  agenteCarga: string; // AGENTE DE CARGAS (CRONOS, CAPITAL, MSC, DSV, DHL, KN, FEDEX)
   armadorCiaAerea: string;
-  blAwb: string;
+  blAwb: string; // BL / AWB (e.g. "FRA-00014811", "SSA205038", "MEDUGK594042")
   numeroDiDuimp: string; // DI
   canal: string; // CANAL (Verde, Amarelo, Vermelho)
   liAnuente?: string; // ANUÊNCIA (ANP, INMETRO, NÃO)
   deferimentoLI?: string; // DEFERIMENTO LI
   portoAeroportoDestino: string; // LOCAL DESEMBARAÇO (SALVADOR, GUARULHOS, VIRACOPOS, SANTOS, SUAPE)
 
-  // Dates & Lead Times from 36 columns
+  // Dates & Lead Times
   dataPO: string; // EMISSÃO OC
-  dataProntidaoCarga: string; // PRONTIDÃO DA CARGA
-  etd: string; // EMBARQUE
+  dataProntidaoCarga: string; // DATA PRONTIDÃO CARGA
+  etd: string; // ETD / EMBARQUE
   etaOriginalPO: string;
-  eta: string; // PREVISÃO CHEGADA
+  eta: string; // ETA / PREVISÃO CHEGADA
   dataChegadaEfetiva?: string; // CHEGADA
   dataRegistroDI?: string; // DATA DO REGISTRO
   dataDesembaraco?: string; // DESEMBARAÇO
@@ -140,7 +188,7 @@ export interface ImportProcess {
   dataEntregaMFX?: string; // ENTREGA MFX
 
   // Lead Time Metrics (Days)
-  transitTimeDias: number; // TT
+  transitTimeDias: number; // TT / TR (ETA - ETD)
   tempoDesembaracoDias: number; // DIAS P/ LIBERAÇÃO (DESEMBARAÇO - CHEGADA)
   tempoEntregaRodoviariaDias: number; // TRÂNSITO (ENTREGA MFX - CARREGAMENTO)
   leadTimeTotalDias?: number; // LEAD TIME (ENTREGA MFX - EMBARQUE)
@@ -155,13 +203,13 @@ export interface ImportProcess {
   atrasoEtaDias: number;
 
   // Financial & Cashflow
-  moeda: CurrencyCode; // MOEDA
+  moeda: CurrencyCode; // MOEDA (EUR, USD, BRL, CNY)
   taxaPtaxDI: number;
   condicaoPagamento: string; // COND. PAGAMENTO (30 DDL, 90 DDL, 180 DDL, 360 DDL)
   dataVencimentoInvoice: string; // DATA DE VENCIMENTO
   statusPagamentoInvoice: 'Pago' | 'A Vencer' | 'Vencido / Crítico';
 
-  valorFOBMoeda: number; // VMLE (Moeda)
+  valorFOBMoeda: number; // Sum of VALOR TOTAL / VMLE (Moeda)
   valorVMLDMoeda?: number; // VMLD (Moeda)
   freteInternacionalMoeda: number;
   seguroMoeda: number;
@@ -193,8 +241,9 @@ export interface ImportProcess {
   pesoBrutoKg: number;
   cubagemCbm: number;
   qtdContainersFCL: number;
+  qtdTotalUnidades?: number; // Sum of QTD across all material lines
 
-  // Linked Items from PEDIDOS
+  // Linked Items from Flat Table / PEDIDOS
   itens: PedidoItem[];
 
   // Computed Risk Level

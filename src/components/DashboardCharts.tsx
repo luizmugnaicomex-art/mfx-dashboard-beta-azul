@@ -132,7 +132,11 @@ export const DashboardCharts: React.FC<DashboardChartsProps> = ({
       ],
     };
 
-    const projetosList = ['PETROBRAS', 'PRIO', 'EXPANSÃO 140 CNTR', 'ESTOQUE'] as const;
+    const dynamicProjects = Array.from(new Set(processos.map((p) => p.projeto).filter(Boolean)));
+    const projetosList =
+      dynamicProjects.length > 0
+        ? dynamicProjects
+        : ['PETROBRAS', 'PRIO', 'EXPANSÃO 140 CNTR', 'ESTOQUE'];
     const chart2Data = {
       labels: projetosList.map((proj) => {
         const count = processos.filter((p) => p.projeto === proj).length;
@@ -150,7 +154,7 @@ export const DashboardCharts: React.FC<DashboardChartsProps> = ({
               ).toFixed(2)
             )
           ),
-          backgroundColor: ['#2563eb', '#0d9488', '#7c3aed', '#64748b'],
+          backgroundColor: ['#2563eb', '#0d9488', '#7c3aed', '#64748b', '#f59e0b', '#ec4899'],
           borderWidth: 1,
         },
       ],
@@ -293,7 +297,13 @@ export const DashboardCharts: React.FC<DashboardChartsProps> = ({
       ],
     };
 
-    const agentes = ['DSV', 'DHL', 'KN', 'FEDEX', 'Hellmann'] as const;
+    const dynamicAgentes = Array.from(
+      new Set(processos.map((p) => p.agenteCarga).filter(Boolean))
+    );
+    const agentes =
+      dynamicAgentes.length > 0
+        ? dynamicAgentes
+        : ['CRONOS', 'CAPITAL', 'MSC', 'DSV', 'DHL', 'KN', 'FEDEX'];
     const chart3Data = {
       labels: agentes.map((a) => `${a} / ÔMEGA`),
       datasets: [
@@ -526,7 +536,13 @@ export const DashboardCharts: React.FC<DashboardChartsProps> = ({
       ],
     };
 
-    const agentes = ['DSV', 'DHL', 'KN', 'FEDEX', 'Hellmann'];
+    const dynamicAgentes = Array.from(
+      new Set(processos.map((p) => p.agenteCarga).filter(Boolean))
+    );
+    const agentes =
+      dynamicAgentes.length > 0
+        ? dynamicAgentes
+        : ['CRONOS', 'CAPITAL', 'MSC', 'DSV', 'DHL', 'KN', 'FEDEX'];
     const chart2Data = {
       labels: agentes,
       datasets: [
@@ -541,7 +557,15 @@ export const DashboardCharts: React.FC<DashboardChartsProps> = ({
               ).toFixed(1)
             )
           ),
-          backgroundColor: ['#22c55e', '#10b981', '#059669', '#0d9488', '#14b8a6'],
+          backgroundColor: [
+            '#22c55e',
+            '#10b981',
+            '#059669',
+            '#0d9488',
+            '#14b8a6',
+            '#3b82f6',
+            '#6366f1',
+          ],
           borderRadius: 6,
         },
       ],

@@ -1,0 +1,6 @@
+{
+  "name": "MFX Comex & Drawback Dashboard",
+  "description": "Executive & Operational Import, Drawback (7 ACs), Freight Saving, and Cashflow Dashboard for MFX Comex (FUP IMPORTAÇÃO BI.xlsx).",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

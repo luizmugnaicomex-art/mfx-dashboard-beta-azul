@@ -419,7 +419,9 @@ export const DashboardGrid: React.FC<DashboardGridProps> = ({
     const agentesList = ['DSV', 'DHL', 'KN', 'FEDEX', 'Hellmann'] as const;
     const agentSummaries = agentesList
       .map((ag) => {
-        const list = processos.filter((p) => p.agenteCarga === ag);
+        const list = processos.filter(
+          (p) => p.agenteCarga.toUpperCase() === ag.toUpperCase()
+        );
         const cotado = list.reduce((s, p) => s + p.cotacaoFreteBRL, 0);
         const pago = list.reduce((s, p) => s + p.fretePagoBRL, 0);
         const saving = list.reduce((s, p) => s + p.savingFreteBRL, 0);

@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
-import { ImportProcess, AtoConcessorio } from '../types/mfx';
+import { ImportProcess, AtoConcessorio, PedidoForecastRow } from '../types/mfx';
 
 interface DetailedTableViewProps {
   processos: ImportProcess[];
+  pedidosForecast: PedidoForecastRow[];
   atosConcessorios: AtoConcessorio[];
   visibleColumns: Record<string, boolean>;
   onSelectProcess: (proc: ImportProcess, tab?: 'overview' | 'espelho' | 'drawback') => void;
@@ -18,13 +19,13 @@ type SortField =
   | 'status'
   | 'modal'
   | 'eta'
-  | 'freeTimeDiasRestantes'
+  | 'transitTimeDias'
   | 'vmldBRL'
-  | 'totalImpostosEstimadosBRL'
   | 'savingFreteBRL';
 
 export const DetailedTableView: React.FC<DetailedTableViewProps> = ({
   processos,
+  pedidosForecast,
   atosConcessorios,
   visibleColumns,
   onSelectProcess,
@@ -32,6 +33,7 @@ export const DetailedTableView: React.FC<DetailedTableViewProps> = ({
   onExportExcel,
 }) => {
   const [sheetSubView, setSheetSubView] = useState<'PROCESSOS' | 'PEDIDOS' | 'ACS'>('PROCESSOS');
+  const [showAll36Cols, setShowAll36Cols] = useState<boolean>(true);
   const [sortField, setSortField] = useState<SortField>('id');
   const [sortAsc, setSortAsc] = useState<boolean>(true);
 
@@ -70,7 +72,7 @@ export const DetailedTableView: React.FC<DetailedTableViewProps> = ({
   return (
     <div className="bg-white dark:bg-[#1f2937] rounded-xl shadow border border-gray-200 dark:border-[#374151] overflow-hidden">
       {/* Top Toolbar */}
-      <div className="px-6 py-4 border-b border-gray-200 dark:border-[#374151] flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="px-6 py-4 border-b border-gray-200 dark:border-[#374151] flex flex-col lg:flex-row lg:items-center justify-between gap-4">
         <div className="flex items-center gap-2 flex-wrap">
           <button
             type="button"
@@ -92,8 +94,7 @@ export const DetailedTableView: React.FC<DetailedTableViewProps> = ({
                 : 'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-200'
             }`}
           >
-            <i className="fas fa-boxes-stacked mr-1.5"></i>Aba PEDIDOS / Itens NCM (
-            {processos.reduce((s, p) => s + p.itens.length, 0)})
+            <i className="fas fa-boxes-stacked mr-1.5"></i>Aba PEDIDOS ({pedidosForecast.length})
           </button>
           <button
             type="button"
@@ -106,9 +107,20 @@ export const DetailedTableView: React.FC<DetailedTableViewProps> = ({
           >
             <i className="fas fa-shield-halved mr-1.5"></i>Aba 7 Atos Concessórios ({atosConcessorios.length})
           </button>
+
+          {sheetSubView === 'PROCESSOS' && (
+            <button
+              type="button"
+              onClick={() => setShowAll36Cols(!showAll36Cols)}
+              className="px-3 py-1.5 rounded-md text-xs font-semibold border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 cursor-pointer"
+            >
+              <i className="fas fa-arrows-left-right mr-1.5 text-teal-600"></i>
+              {showAll36Cols ? 'Modo Completo (36 Colunas FUP)' : 'Modo Resumido'}
+            </button>
+          )}
         </div>
 
-        <div className="flex items-center gap-4 text-xs">
+        <div className="flex items-center gap-4 text-xs flex-wrap">
           <div className="flex items-center gap-3 text-[11px] font-semibold">
             <span className="flex items-center gap-1 text-red-600 dark:text-red-400">
               <span className="w-2.5 h-2.5 inline-block bg-red-200 dark:bg-red-900 border border-red-500 rounded-xs"></span>
@@ -129,26 +141,28 @@ export const DetailedTableView: React.FC<DetailedTableViewProps> = ({
         </div>
       </div>
 
-      {/* SHEET 1: PROCESSOS */}
+      {/* ===================================================================
+          SHEET 1: ABA PROCESSOS (36 COLUMNS FROM FUP IMPORTAÇÃO BI_2.xlsx)
+         =================================================================== */}
       {sheetSubView === 'PROCESSOS' && (
         <div className="table-responsive">
           <table className="w-full text-left border-collapse text-xs">
             <thead className="bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-200 uppercase border-b border-gray-200 dark:border-gray-700">
               <tr>
+                {visibleColumns.projeto && (
+                  <th
+                    onClick={() => handleSort('projeto')}
+                    className="sortable-header py-3 px-3 font-extrabold whitespace-nowrap"
+                  >
+                    PROJETO {renderSortIcon('projeto')}
+                  </th>
+                )}
                 {visibleColumns.processo && (
                   <th
                     onClick={() => handleSort('id')}
                     className="sortable-header py-3 px-3 font-extrabold whitespace-nowrap"
                   >
-                    Processo {renderSortIcon('id')}
-                  </th>
-                )}
-                {visibleColumns.oc && (
-                  <th
-                    onClick={() => handleSort('oc')}
-                    className="sortable-header py-3 px-3 font-extrabold whitespace-nowrap"
-                  >
-                    PO / OC {renderSortIcon('oc')}
+                    PROCESSO {renderSortIcon('id')}
                   </th>
                 )}
                 {visibleColumns.fornecedor && (
@@ -156,23 +170,21 @@ export const DetailedTableView: React.FC<DetailedTableViewProps> = ({
                     onClick={() => handleSort('fornecedor')}
                     className="sortable-header py-3 px-3 font-extrabold whitespace-nowrap"
                   >
-                    Fornecedor {renderSortIcon('fornecedor')}
+                    EXPORTADOR {renderSortIcon('fornecedor')}
                   </th>
                 )}
-                {visibleColumns.projeto && (
-                  <th
-                    onClick={() => handleSort('projeto')}
-                    className="sortable-header py-3 px-3 font-extrabold whitespace-nowrap"
-                  >
-                    Projeto {renderSortIcon('projeto')}
-                  </th>
+                {showAll36Cols && (
+                  <th className="py-3 px-3 font-extrabold whitespace-nowrap">FATURA</th>
                 )}
-                {visibleColumns.status && (
+                {showAll36Cols && (
+                  <th className="py-3 px-3 font-extrabold whitespace-nowrap">DATA DE VENCIMENTO</th>
+                )}
+                {visibleColumns.oc && (
                   <th
-                    onClick={() => handleSort('status')}
+                    onClick={() => handleSort('oc')}
                     className="sortable-header py-3 px-3 font-extrabold whitespace-nowrap"
                   >
-                    Status Atual {renderSortIcon('status')}
+                    OC {renderSortIcon('oc')}
                   </th>
                 )}
                 {visibleColumns.modal && (
@@ -180,56 +192,106 @@ export const DetailedTableView: React.FC<DetailedTableViewProps> = ({
                     onClick={() => handleSort('modal')}
                     className="sortable-header py-3 px-3 font-extrabold whitespace-nowrap"
                   >
-                    Modal / Incoterm {renderSortIcon('modal')}
+                    MODAL {renderSortIcon('modal')}
                   </th>
                 )}
-                {visibleColumns.blAwb && (
-                  <th className="py-3 px-3 font-extrabold whitespace-nowrap">BL / AWB & DI</th>
-                )}
-                {visibleColumns.regimeAC && (
-                  <th className="py-3 px-3 font-extrabold whitespace-nowrap">Regime / Ato Concessório</th>
-                )}
-                {visibleColumns.eta && (
-                  <th
-                    onClick={() => handleSort('eta')}
-                    className="sortable-header py-3 px-3 font-extrabold whitespace-nowrap"
-                  >
-                    ETD ➔ ETA {renderSortIcon('eta')}
-                  </th>
-                )}
-                {visibleColumns.freeTime && (
-                  <th
-                    onClick={() => handleSort('freeTimeDiasRestantes')}
-                    className="sortable-header py-3 px-3 font-extrabold text-right whitespace-nowrap"
-                  >
-                    Free Time {renderSortIcon('freeTimeDiasRestantes')}
-                  </th>
+                {showAll36Cols && (
+                  <>
+                    <th className="py-3 px-3 font-extrabold whitespace-nowrap">INCOTERM</th>
+                    <th className="py-3 px-3 font-extrabold whitespace-nowrap">COND. PAGAMENTO</th>
+                    <th className="py-3 px-3 font-extrabold whitespace-nowrap">MOEDA</th>
+                    <th className="py-3 px-3 font-extrabold text-right whitespace-nowrap">VMLE</th>
+                    <th className="py-3 px-3 font-extrabold text-right whitespace-nowrap">VMLD</th>
+                  </>
                 )}
                 {visibleColumns.vmld && (
                   <th
                     onClick={() => handleSort('vmldBRL')}
                     className="sortable-header py-3 px-3 font-extrabold text-right whitespace-nowrap"
                   >
-                    VMLD / CIF (R$) {renderSortIcon('vmldBRL')}
+                    VMLD (R$) {renderSortIcon('vmldBRL')}
                   </th>
                 )}
-                {visibleColumns.impostos && (
-                  <th
-                    onClick={() => handleSort('totalImpostosEstimadosBRL')}
-                    className="sortable-header py-3 px-3 font-extrabold text-right whitespace-nowrap"
-                  >
-                    Impostos (R$) {renderSortIcon('totalImpostosEstimadosBRL')}
-                  </th>
+                {showAll36Cols && (
+                  <>
+                    <th className="py-3 px-3 font-extrabold text-right whitespace-nowrap">
+                      COTAÇÃO FRETE R$
+                    </th>
+                    <th className="py-3 px-3 font-extrabold text-right whitespace-nowrap">
+                      FRETE PAGO R$
+                    </th>
+                  </>
                 )}
                 {visibleColumns.saving && (
                   <th
                     onClick={() => handleSort('savingFreteBRL')}
                     className="sortable-header py-3 px-3 font-extrabold text-right whitespace-nowrap"
                   >
-                    Saving Frete {renderSortIcon('savingFreteBRL')}
+                    SAVING FRETE {renderSortIcon('savingFreteBRL')}
                   </th>
                 )}
-                <th className="py-3 px-3 font-extrabold text-center whitespace-nowrap">Ações</th>
+                {showAll36Cols && (
+                  <th className="py-3 px-3 font-extrabold whitespace-nowrap">AGENTE DE CARGA</th>
+                )}
+                {visibleColumns.eta && (
+                  <>
+                    <th className="py-3 px-3 font-extrabold whitespace-nowrap">EMBARQUE</th>
+                    <th
+                      onClick={() => handleSort('eta')}
+                      className="sortable-header py-3 px-3 font-extrabold whitespace-nowrap"
+                    >
+                      PREVISÃO CHEGADA {renderSortIcon('eta')}
+                    </th>
+                    <th className="py-3 px-3 font-extrabold whitespace-nowrap">CHEGADA</th>
+                    <th
+                      onClick={() => handleSort('transitTimeDias')}
+                      className="sortable-header py-3 px-3 font-extrabold text-right whitespace-nowrap"
+                    >
+                      TT {renderSortIcon('transitTimeDias')}
+                    </th>
+                  </>
+                )}
+                {showAll36Cols && (
+                  <>
+                    <th className="py-3 px-3 font-extrabold whitespace-nowrap">LOCAL DESEMBARAÇO</th>
+                    <th className="py-3 px-3 font-extrabold whitespace-nowrap">ANUÊNCIA</th>
+                    <th className="py-3 px-3 font-extrabold whitespace-nowrap">DEFERIMENTO LI</th>
+                  </>
+                )}
+                {visibleColumns.regimeAC && (
+                  <th className="py-3 px-3 font-extrabold whitespace-nowrap">BENEFÍCIO / AC</th>
+                )}
+                {visibleColumns.blAwb && (
+                  <>
+                    <th className="py-3 px-3 font-extrabold whitespace-nowrap">DI</th>
+                    {showAll36Cols && (
+                      <th className="py-3 px-3 font-extrabold whitespace-nowrap">DATA DO REGISTRO</th>
+                    )}
+                    <th className="py-3 px-3 font-extrabold whitespace-nowrap">CANAL</th>
+                  </>
+                )}
+                {showAll36Cols && (
+                  <>
+                    <th className="py-3 px-3 font-extrabold whitespace-nowrap">DESEMBARAÇO</th>
+                    <th className="py-3 px-3 font-extrabold text-right whitespace-nowrap">
+                      DIAS P/ LIBERAÇÃO
+                    </th>
+                    <th className="py-3 px-3 font-extrabold whitespace-nowrap">CARREGAMENTO</th>
+                    <th className="py-3 px-3 font-extrabold whitespace-nowrap">TRANSPORTADORA</th>
+                    <th className="py-3 px-3 font-extrabold whitespace-nowrap">ENTREGA MFX</th>
+                    <th className="py-3 px-3 font-extrabold text-right whitespace-nowrap">TRÂNSITO</th>
+                    <th className="py-3 px-3 font-extrabold text-right whitespace-nowrap">LEAD TIME</th>
+                  </>
+                )}
+                {visibleColumns.status && (
+                  <th
+                    onClick={() => handleSort('status')}
+                    className="sortable-header py-3 px-3 font-extrabold whitespace-nowrap"
+                  >
+                    STATUS {renderSortIcon('status')}
+                  </th>
+                )}
+                <th className="py-3 px-3 font-extrabold text-center whitespace-nowrap">AÇÕES</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
@@ -246,37 +308,30 @@ export const DetailedTableView: React.FC<DetailedTableViewProps> = ({
                     onClick={() => onSelectProcess(p, 'overview')}
                     className={`${rowClass} cursor-pointer transition-colors`}
                   >
+                    {visibleColumns.projeto && (
+                      <td className="py-2.5 px-3 font-bold whitespace-nowrap">{p.projeto}</td>
+                    )}
                     {visibleColumns.processo && (
                       <td className="py-2.5 px-3 font-mono font-extrabold text-blue-700 dark:text-blue-300 whitespace-nowrap">
                         {p.id}
-                        {p.alertaPreAlertaAWB && (
-                          <span
-                            title="Aéreo sem Pré-Alerta AWB à Ômega"
-                            className="ml-1.5 text-red-600 dark:text-red-300"
-                          >
-                            <i className="fas fa-bell-slash"></i>
-                          </span>
-                        )}
                       </td>
-                    )}
-                    {visibleColumns.oc && (
-                      <td className="py-2.5 px-3 font-mono font-semibold whitespace-nowrap">{p.oc}</td>
                     )}
                     {visibleColumns.fornecedor && (
                       <td className="py-2.5 px-3 font-bold whitespace-nowrap">{p.fornecedor}</td>
                     )}
-                    {visibleColumns.projeto && (
-                      <td className="py-2.5 px-3 font-semibold whitespace-nowrap">{p.projeto}</td>
+                    {showAll36Cols && (
+                      <td className="py-2.5 px-3 font-mono whitespace-nowrap">
+                        {p.commercialInvoice}
+                      </td>
                     )}
-                    {visibleColumns.status && (
-                      <td className="py-2.5 px-3 font-bold whitespace-nowrap">
-                        {p.cargaParadaDrawback ? (
-                          <span className="text-red-700 dark:text-red-200 font-extrabold">
-                            <i className="fas fa-ban mr-1"></i>Parado Ag. Drawback
-                          </span>
-                        ) : (
-                          <span>{p.status}</span>
-                        )}
+                    {showAll36Cols && (
+                      <td className="py-2.5 px-3 font-mono whitespace-nowrap tabular-nums">
+                        {p.dataVencimentoInvoice}
+                      </td>
+                    )}
+                    {visibleColumns.oc && (
+                      <td className="py-2.5 px-3 font-mono font-semibold whitespace-nowrap">
+                        {p.oc}
                       </td>
                     )}
                     {visibleColumns.modal && (
@@ -286,60 +341,136 @@ export const DetailedTableView: React.FC<DetailedTableViewProps> = ({
                             p.modal === 'AÉREO' ? 'fa-plane text-sky-600' : 'fa-ship text-blue-600'
                           } mr-1`}
                         ></i>
-                        {p.modal} · {p.incoterm}
+                        {p.modal}
                       </td>
                     )}
-                    {visibleColumns.blAwb && (
-                      <td className="py-2.5 px-3 font-mono whitespace-nowrap">
-                        <div>{p.blAwb}</div>
-                        <div className="text-[11px] text-gray-500 dark:text-gray-300">
-                          DI: {p.numeroDiDuimp} ({p.canal})
-                        </div>
-                      </td>
-                    )}
-                    {visibleColumns.regimeAC && (
-                      <td className="py-2.5 px-3 whitespace-nowrap">
-                        <div className="font-semibold">{p.regime}</div>
-                        <div className="text-[11px] font-mono text-blue-700 dark:text-blue-300">
-                          {p.atoConcessorio}
-                        </div>
-                      </td>
-                    )}
-                    {visibleColumns.eta && (
-                      <td className="py-2.5 px-3 font-mono whitespace-nowrap tabular-nums">
-                        <div>ETD: {p.etd}</div>
-                        <div className="font-bold">ETA: {p.eta}</div>
-                      </td>
-                    )}
-                    {visibleColumns.freeTime && (
-                      <td className="py-2.5 px-3 text-right font-mono font-bold whitespace-nowrap tabular-nums">
-                        <span className={p.freeTimeDiasRestantes < 3 ? 'text-red-600 font-extrabold' : ''}>
-                          {p.freeTimeDiasRestantes}d / {p.freeTimeTotalDias}d
-                        </span>
-                      </td>
+                    {showAll36Cols && (
+                      <>
+                        <td className="py-2.5 px-3 font-mono whitespace-nowrap">{p.incoterm}</td>
+                        <td className="py-2.5 px-3 font-mono whitespace-nowrap">
+                          {p.condicaoPagamento}
+                        </td>
+                        <td className="py-2.5 px-3 font-mono font-bold whitespace-nowrap">
+                          {p.moeda}
+                        </td>
+                        <td className="py-2.5 px-3 text-right font-mono whitespace-nowrap tabular-nums">
+                          {p.valorFOBMoeda.toLocaleString('pt-BR')}
+                        </td>
+                        <td className="py-2.5 px-3 text-right font-mono whitespace-nowrap tabular-nums">
+                          {(p.valorVMLDMoeda ?? p.valorFOBMoeda).toLocaleString('pt-BR')}
+                        </td>
+                      </>
                     )}
                     {visibleColumns.vmld && (
                       <td className="py-2.5 px-3 text-right font-mono font-bold whitespace-nowrap tabular-nums">
                         {fmtBRL(p.vmldBRL)}
                       </td>
                     )}
-                    {visibleColumns.impostos && (
-                      <td className="py-2.5 px-3 text-right font-mono whitespace-nowrap tabular-nums">
-                        <div className="font-bold">{fmtBRL(p.totalImpostosEstimadosBRL)}</div>
-                        {p.impostosPagosIndevidamenteBRL > 0 ? (
-                          <div className="text-[10px] font-bold text-red-700 dark:text-red-300">
-                            Leakage: {fmtBRL(p.impostosPagosIndevidamenteBRL)}
-                          </div>
-                        ) : (
-                          <div className="text-[10px] text-emerald-700 dark:text-emerald-300">
-                            Suspenso Drawback
-                          </div>
-                        )}
-                      </td>
+                    {showAll36Cols && (
+                      <>
+                        <td className="py-2.5 px-3 text-right font-mono whitespace-nowrap tabular-nums">
+                          {fmtBRL(p.cotacaoFreteBRL)}
+                        </td>
+                        <td className="py-2.5 px-3 text-right font-mono whitespace-nowrap tabular-nums">
+                          {fmtBRL(p.fretePagoBRL)}
+                        </td>
+                      </>
                     )}
                     {visibleColumns.saving && (
                       <td className="py-2.5 px-3 text-right font-mono font-bold text-emerald-700 dark:text-emerald-300 whitespace-nowrap tabular-nums">
                         + {fmtBRL(p.savingFreteBRL)}
+                      </td>
+                    )}
+                    {showAll36Cols && (
+                      <td className="py-2.5 px-3 font-bold whitespace-nowrap">{p.agenteCarga}</td>
+                    )}
+                    {visibleColumns.eta && (
+                      <>
+                        <td className="py-2.5 px-3 font-mono whitespace-nowrap tabular-nums">
+                          {p.etd}
+                        </td>
+                        <td className="py-2.5 px-3 font-mono font-semibold whitespace-nowrap tabular-nums">
+                          {p.eta}
+                        </td>
+                        <td className="py-2.5 px-3 font-mono whitespace-nowrap tabular-nums">
+                          {p.dataChegadaEfetiva || '-'}
+                        </td>
+                        <td className="py-2.5 px-3 text-right font-mono font-bold whitespace-nowrap tabular-nums">
+                          {p.transitTimeDias}d
+                        </td>
+                      </>
+                    )}
+                    {showAll36Cols && (
+                      <>
+                        <td className="py-2.5 px-3 font-semibold whitespace-nowrap">
+                          {p.portoAeroportoDestino}
+                        </td>
+                        <td className="py-2.5 px-3 whitespace-nowrap">{p.liAnuente || 'NÃO'}</td>
+                        <td className="py-2.5 px-3 font-mono whitespace-nowrap tabular-nums">
+                          {p.deferimentoLI || '-'}
+                        </td>
+                      </>
+                    )}
+                    {visibleColumns.regimeAC && (
+                      <td className="py-2.5 px-3 whitespace-nowrap">
+                        <div className="font-bold">{p.beneficioRaw || p.regime}</div>
+                        <div className="text-[11px] font-mono text-blue-700 dark:text-blue-300">
+                          {p.atoConcessorio}
+                        </div>
+                      </td>
+                    )}
+                    {visibleColumns.blAwb && (
+                      <>
+                        <td className="py-2.5 px-3 font-mono whitespace-nowrap">
+                          {p.numeroDiDuimp}
+                        </td>
+                        {showAll36Cols && (
+                          <td className="py-2.5 px-3 font-mono whitespace-nowrap tabular-nums">
+                            {p.dataRegistroDI || '-'}
+                          </td>
+                        )}
+                        <td className="py-2.5 px-3 font-bold whitespace-nowrap">{p.canal}</td>
+                      </>
+                    )}
+                    {showAll36Cols && (
+                      <>
+                        <td className="py-2.5 px-3 font-mono whitespace-nowrap tabular-nums">
+                          {p.dataDesembaraco || '-'}
+                        </td>
+                        <td className="py-2.5 px-3 text-right font-mono whitespace-nowrap tabular-nums">
+                          {p.tempoDesembaracoDias}d
+                        </td>
+                        <td className="py-2.5 px-3 font-mono whitespace-nowrap tabular-nums">
+                          {p.dataCarregamento || '-'}
+                        </td>
+                        <td className="py-2.5 px-3 whitespace-nowrap">
+                          {p.transportadoraNacional}
+                        </td>
+                        <td className="py-2.5 px-3 font-mono font-bold whitespace-nowrap tabular-nums">
+                          {p.dataEntregaMFX || '-'}
+                        </td>
+                        <td className="py-2.5 px-3 text-right font-mono whitespace-nowrap tabular-nums">
+                          {p.tempoEntregaRodoviariaDias}d
+                        </td>
+                        <td className="py-2.5 px-3 text-right font-mono font-bold whitespace-nowrap tabular-nums">
+                          {p.leadTimeTotalDias ??
+                            p.transitTimeDias +
+                              p.tempoDesembaracoDias +
+                              p.tempoEntregaRodoviariaDias}
+                          d
+                        </td>
+                      </>
+                    )}
+                    {visibleColumns.status && (
+                      <td className="py-2.5 px-3 font-bold whitespace-nowrap">
+                        {p.cargaParadaDrawback ? (
+                          <span className="text-red-700 dark:text-red-200 font-extrabold">
+                            <i className="fas fa-ban mr-1"></i>
+                            {p.statusRawExcel || p.status}
+                          </span>
+                        ) : (
+                          <span>{p.statusRawExcel || p.status}</span>
+                        )}
                       </td>
                     )}
                     <td
@@ -373,84 +504,70 @@ export const DetailedTableView: React.FC<DetailedTableViewProps> = ({
         </div>
       )}
 
-      {/* SHEET 2: PEDIDOS (ITENS & NCMS) */}
+      {/* ===================================================================
+          SHEET 2: ABA PEDIDOS (EXACT COLUMNS FROM FUP IMPORTAÇÃO BI_2.xlsx)
+         =================================================================== */}
       {sheetSubView === 'PEDIDOS' && (
         <div className="table-responsive">
           <table className="w-full text-left border-collapse text-xs">
             <thead className="bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-200 uppercase border-b border-gray-200 dark:border-gray-700">
               <tr>
-                <th className="py-3 px-3 font-extrabold">OC / Pedido</th>
-                <th className="py-3 px-3 font-extrabold">Processo</th>
-                <th className="py-3 px-3 font-extrabold">Cód. Item</th>
-                <th className="py-3 px-3 font-extrabold">Descrição do Insumo</th>
-                <th className="py-3 px-3 font-extrabold">NCM Fatura</th>
-                <th className="py-3 px-3 font-extrabold">NCM no AC</th>
-                <th className="py-3 px-3 font-extrabold text-right">Qtd PO</th>
-                <th className="py-3 px-3 font-extrabold text-right">Qtd no AC</th>
-                <th className="py-3 px-3 font-extrabold text-right">Valor Total</th>
-                <th className="py-3 px-3 font-extrabold">Auditoria Laudo Técnico</th>
+                <th className="py-3 px-3 font-extrabold">PROJETO</th>
+                <th className="py-3 px-3 font-extrabold">PROCESSO</th>
+                <th className="py-3 px-3 font-extrabold">FORNECEDOR</th>
+                <th className="py-3 px-3 font-extrabold">OC</th>
+                <th className="py-3 px-3 font-extrabold">EMISSÃO OC</th>
+                <th className="py-3 px-3 font-extrabold">INCOTERM</th>
+                <th className="py-3 px-3 font-extrabold text-right">VALOR</th>
+                <th className="py-3 px-3 font-extrabold">MOEDA</th>
+                <th className="py-3 px-3 font-extrabold">PRONTIDÃO DA CARGA</th>
+                <th className="py-3 px-3 font-extrabold">STATUS</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
-              {processos.flatMap((p) =>
-                p.itens.map((it) => {
-                  const isHigh =
-                    it.alertaLaudoTecnico === 'Qtd Irrisória (0,01 no AC)' ||
-                    it.alertaLaudoTecnico === 'Sem Cobertura AC';
-                  const isMed = it.alertaLaudoTecnico === 'NCM Divergente entre ACs';
-                  return (
-                    <tr
-                      key={it.id}
-                      onClick={() => onSelectProcess(p, 'overview')}
-                      className={`${
-                        isHigh
-                          ? 'row-risk-high'
-                          : isMed
-                          ? 'row-risk-medium'
-                          : 'hover:bg-gray-50 dark:hover:bg-gray-800/60'
-                      } cursor-pointer`}
-                    >
-                      <td className="py-2.5 px-3 font-mono font-bold">{it.oc}</td>
-                      <td className="py-2.5 px-3 font-mono font-bold text-blue-600 dark:text-blue-400">
-                        {p.id}
-                      </td>
-                      <td className="py-2.5 px-3 font-mono">{it.codigoItem}</td>
-                      <td className="py-2.5 px-3 font-medium">{it.descricao}</td>
-                      <td className="py-2.5 px-3 font-mono font-bold tabular-nums">{it.ncm}</td>
-                      <td className="py-2.5 px-3 font-mono tabular-nums">{it.ncmAtoConcessorio || it.ncm}</td>
-                      <td className="py-2.5 px-3 text-right font-mono font-bold tabular-nums">
-                        {it.quantidade.toLocaleString('pt-BR')} {it.unidade}
-                      </td>
-                      <td className="py-2.5 px-3 text-right font-mono tabular-nums">
-                        {it.qtdAutorizadaAC !== undefined
-                          ? `${it.qtdAutorizadaAC.toLocaleString('pt-BR')} ${it.unidade}`
-                          : '-'}
-                      </td>
-                      <td className="py-2.5 px-3 text-right font-mono font-bold tabular-nums">
-                        {it.moeda} {it.valorTotalMoeda.toLocaleString('pt-BR')}
-                      </td>
-                      <td className="py-2.5 px-3 font-bold">
-                        {it.alertaLaudoTecnico && it.alertaLaudoTecnico !== 'OK' ? (
-                          <span className="text-red-700 dark:text-red-300">
-                            <i className="fas fa-triangle-exclamation mr-1"></i>
-                            {it.alertaLaudoTecnico}
-                          </span>
-                        ) : (
-                          <span className="text-emerald-700 dark:text-emerald-400">
-                            <i className="fas fa-check mr-1"></i>Laudo OK
-                          </span>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
+              {pedidosForecast.map((pf) => {
+                const linkedProc = processos.find(
+                  (p) => p.id === pf.processo || p.oc === pf.oc || p.oc.includes(pf.oc)
+                );
+                const isHigh = linkedProc?.riskLevel === 'high';
+                const isMed = linkedProc?.riskLevel === 'medium';
+                return (
+                  <tr
+                    key={pf.id}
+                    onClick={() => linkedProc && onSelectProcess(linkedProc, 'overview')}
+                    className={`${
+                      isHigh
+                        ? 'row-risk-high'
+                        : isMed
+                        ? 'row-risk-medium'
+                        : 'hover:bg-gray-50 dark:hover:bg-gray-800/60'
+                    } cursor-pointer`}
+                  >
+                    <td className="py-2.5 px-3 font-bold">{pf.projeto}</td>
+                    <td className="py-2.5 px-3 font-mono font-bold text-blue-600 dark:text-blue-400">
+                      {pf.processo}
+                    </td>
+                    <td className="py-2.5 px-3 font-bold">{pf.fornecedor}</td>
+                    <td className="py-2.5 px-3 font-mono font-semibold">{pf.oc}</td>
+                    <td className="py-2.5 px-3 font-mono tabular-nums">{pf.emissaoOC}</td>
+                    <td className="py-2.5 px-3 font-mono">{pf.incoterm}</td>
+                    <td className="py-2.5 px-3 text-right font-mono font-bold tabular-nums">
+                      {pf.valor.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                    </td>
+                    <td className="py-2.5 px-3 font-mono font-bold">{pf.moeda}</td>
+                    <td className="py-2.5 px-3 font-mono tabular-nums">{pf.prontidaoCarga}</td>
+                    <td className="py-2.5 px-3 font-bold">{pf.status}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
       )}
 
-      {/* SHEET 3: 7 ATOS CONCESSÓRIOS */}
+      {/* ===================================================================
+          SHEET 3: 7 ATOS CONCESSÓRIOS
+         =================================================================== */}
       {sheetSubView === 'ACS' && (
         <div className="table-responsive">
           <table className="w-full text-left border-collapse text-xs">

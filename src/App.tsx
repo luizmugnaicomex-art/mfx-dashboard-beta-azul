@@ -2,12 +2,14 @@ import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
   ImportProcess,
   AtoConcessorio,
+  PedidoForecastRow,
   FilterState,
   PtaxRates,
   LanguageCode,
 } from './types/mfx';
 import {
   PROCESSOS_MFX,
+  PEDIDOS_FORECAST_MFX,
   ATOS_CONCESSORIOS_MFX,
   INITIAL_PTAX,
   TRANSLATIONS,
@@ -61,7 +63,7 @@ const COLUMN_LABELS: Record<string, string> = {
   modal: 'Modal & Incoterm',
   blAwb: 'BL / AWB & DI',
   regimeAC: 'Regime / Ato Concessório',
-  eta: 'Datas Embarque & ETA',
+  eta: 'Datas Embarque, ETA & TT',
   freeTime: 'Free Time Restante',
   vmld: 'Valor Aduaneiro VMLD (R$)',
   impostos: 'Impostos DI & Drawback',
@@ -77,12 +79,14 @@ interface ToastMessage {
 
 export default function App() {
   const [processos, setProcessos] = useState<ImportProcess[]>(PROCESSOS_MFX);
+  const [pedidosForecast, setPedidosForecast] =
+    useState<PedidoForecastRow[]>(PEDIDOS_FORECAST_MFX);
   const [atosConcessorios, setAtosConcessorios] = useState<AtoConcessorio[]>(ATOS_CONCESSORIOS_MFX);
-  const [ptax, setPtax] = useState<PtaxRates>(INITIAL_PTAX);
+  const [ptax] = useState<PtaxRates>(INITIAL_PTAX);
   const [sourceFileName, setSourceFileName] = useState<string>(
-    'FUP IMPORTAÇÃO BI.xlsx (Abas PROCESSOS & PEDIDOS)'
+    'FUP IMPORTAÇÃO BI_2.xlsx (Abas PROCESSOS & PEDIDOS)'
   );
-  const [lastUpdatedTime, setLastUpdatedTime] = useState<string>('03/11/2026 16:55');
+  const [lastUpdatedTime, setLastUpdatedTime] = useState<string>('03/11/2026 17:40');
 
   const [darkMode, setDarkMode] = useState<boolean>(false);
   const [lang, setLang] = useState<LanguageCode>('pt');
@@ -90,7 +94,6 @@ export default function App() {
 
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
   const [filters, setFilters] = useState<FilterState>(INITIAL_FILTERS);
-  const [appliedFilters, setAppliedFilters] = useState<FilterState>(INITIAL_FILTERS);
   const [visibleColumns, setVisibleColumns] =
     useState<Record<string, boolean>>(DEFAULT_VISIBLE_COLUMNS);
 
@@ -118,7 +121,7 @@ export default function App() {
     setToasts((prev) => [...prev, { id, title, description, type }]);
     setTimeout(() => {
       setToasts((prev) => prev.filter((item) => item.id !== id));
-    }, 4500);
+    }, 5000);
   };
 
   // Sync dark mode class on body & html
@@ -157,29 +160,58 @@ export default function App() {
     [atosConcessorios]
   );
 
-  // Filtered Processes (Live filtering on multi-select or search, plus explicit Filtrar button)
+  // Filtered Processes (Accurate multi-dimensional filtering)
   const filteredProcessos = useMemo(() => {
     const f = filters;
+
+    const modalOptions = ['MARÍTIMO', 'AÉREO'];
+    const selectedModals = f.modalIncoterm.filter((x) => modalOptions.includes(x));
+    const selectedIncoterms = f.modalIncoterm.filter((x) => !modalOptions.includes(x));
+
+    const regimeOptions = ['Drawback Suspensão', 'Recolhimento Integral', 'Ex-Tarifário'];
+    const selectedRegimes = f.regimeAC.filter((x) => regimeOptions.includes(x));
+    const selectedACs = f.regimeAC.filter((x) => !regimeOptions.includes(x));
+
+    const despOptions = ['ÔMEGA'];
+    const selectedDespachantes = f.agentes.filter((x) => despOptions.includes(x));
+    const selectedForwarders = f.agentes.filter((x) => !despOptions.includes(x));
+
     return processos.filter((p) => {
       if (f.pos.length > 0 && !f.pos.includes(p.oc)) return false;
       if (f.projetos.length > 0 && !f.projetos.includes(p.projeto)) return false;
       if (f.status.length > 0 && !f.status.includes(p.status)) return false;
-      if (f.modalIncoterm.length > 0) {
-        const matchesModal = f.modalIncoterm.includes(p.modal);
-        const matchesInco = f.modalIncoterm.includes(p.incoterm);
-        if (!matchesModal && !matchesInco) return false;
+
+      if (selectedModals.length > 0 && !selectedModals.includes(p.modal)) return false;
+      if (
+        selectedIncoterms.length > 0 &&
+        !selectedIncoterms.some((inc) => inc.toUpperCase() === p.incoterm.toUpperCase())
+      ) {
+        return false;
       }
-      if (f.regimeAC.length > 0) {
-        const matchesRegime = f.regimeAC.includes(p.regime);
-        const matchesAC = f.regimeAC.includes(p.atoConcessorio);
-        if (!matchesRegime && !matchesAC) return false;
+
+      if (selectedRegimes.length > 0 && !selectedRegimes.includes(p.regime)) return false;
+      if (selectedACs.length > 0 && !selectedACs.includes(p.atoConcessorio)) return false;
+
+      if (
+        f.fornecedores.length > 0 &&
+        !f.fornecedores.some((sup) => sup.toUpperCase() === p.fornecedor.toUpperCase())
+      ) {
+        return false;
       }
-      if (f.fornecedores.length > 0 && !f.fornecedores.includes(p.fornecedor)) return false;
-      if (f.agentes.length > 0) {
-        const matchesAg = f.agentes.includes(p.agenteCarga);
-        const matchesDesp = f.agentes.includes(p.despachante);
-        if (!matchesAg && !matchesDesp) return false;
+
+      if (
+        selectedDespachantes.length > 0 &&
+        !selectedDespachantes.some((d) => d.toUpperCase() === p.despachante.toUpperCase())
+      ) {
+        return false;
       }
+      if (
+        selectedForwarders.length > 0 &&
+        !selectedForwarders.some((ag) => ag.toUpperCase() === p.agenteCarga.toUpperCase())
+      ) {
+        return false;
+      }
+
       if (
         f.searchPO.trim() &&
         !p.oc.toLowerCase().includes(f.searchPO.trim().toLowerCase()) &&
@@ -208,6 +240,30 @@ export default function App() {
       return true;
     });
   }, [processos, filters]);
+
+  // Filtered Atos Concessórios (Reactive to project, AC, or process filters on Tab 5 & Tab 6)
+  const filteredAtosConcessorios = useMemo(() => {
+    const f = filters;
+    const regimeOptions = ['Drawback Suspensão', 'Recolhimento Integral', 'Ex-Tarifário'];
+    const selectedACs = f.regimeAC.filter((x) => !regimeOptions.includes(x));
+
+    return atosConcessorios.filter((ac) => {
+      if (f.projetos.length > 0 && !f.projetos.includes(ac.projetoVinculado)) return false;
+      if (selectedACs.length > 0 && !selectedACs.includes(ac.id)) return false;
+      if (
+        f.pos.length > 0 ||
+        f.fornecedores.length > 0 ||
+        f.searchPO.trim() ||
+        f.searchProcesso.trim()
+      ) {
+        const linkedToFiltered = filteredProcessos.some(
+          (p) => p.atoConcessorio === ac.id || ac.processosVinculados.includes(p.id)
+        );
+        if (!linkedToFiltered) return false;
+      }
+      return true;
+    });
+  }, [atosConcessorios, filters, filteredProcessos]);
 
   const activeFilterCount = useMemo(() => {
     let count =
@@ -255,15 +311,22 @@ export default function App() {
     reader.onload = () => {
       if (typeof reader.result === 'string') {
         setLogoUrl(reader.result);
-        addToast('Logo Atualizada', 'A logomarca personalizada da MFX foi aplicada ao cabeçalho.', 'info');
+        addToast(
+          'Logo Atualizada',
+          'A logomarca personalizada da MFX foi aplicada ao cabeçalho.',
+          'info'
+        );
       }
     };
     reader.readAsDataURL(file);
   };
 
+  // Bulletproof XLSX Upload Handler on #file-upload
   const handleExcelUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    const fileName = file.name;
+
     const reader = new FileReader();
     reader.onload = (evt) => {
       try {
@@ -271,7 +334,25 @@ export default function App() {
         const parsed = parseMfxExcelFile(buffer, ptax);
         if (parsed.processos.length > 0) {
           setProcessos(parsed.processos);
-          setSourceFileName(`${file.name} (Abas: ${parsed.sheetNames.join(', ')})`);
+          setPedidosForecast(
+            parsed.pedidosForecast.length > 0
+              ? parsed.pedidosForecast
+              : parsed.processos.map((p, i) => ({
+                  id: `PED-UP-${i + 1}`,
+                  projeto: p.projeto,
+                  processo: p.id,
+                  fornecedor: p.fornecedor,
+                  oc: p.oc,
+                  emissaoOC: p.dataPO,
+                  incoterm: p.incoterm,
+                  valor: p.valorFOBMoeda,
+                  moeda: p.moeda,
+                  prontidaoCarga: p.dataProntidaoCarga,
+                  status: p.statusRawExcel || p.status,
+                }))
+          );
+          setFilters(INITIAL_FILTERS);
+          setSourceFileName(`${fileName} (Abas: ${parsed.sheetNames.join(', ')})`);
           const now = new Date();
           setLastUpdatedTime(
             `${now.toLocaleDateString('pt-BR')} ${now.toLocaleTimeString('pt-BR', {
@@ -280,18 +361,19 @@ export default function App() {
             })}`
           );
           addToast(
-            'Planilha FUP Importação Carregada!',
-            `${parsed.processos.length} processos e ${parsed.pedidosCount} itens de pedidos importados com sucesso.`,
+            `Arquivo ${fileName} carregado com sucesso!`,
+            `${parsed.processos.length} processos e ${parsed.pedidosCount} pedidos sincronizados.`,
             'success'
           );
         } else {
           addToast(
-            'Planilha Vazia ou Formato Inválido',
-            'Verifique se o arquivo XLSX possui as abas PROCESSOS e PEDIDOS.',
+            'Planilha sem linhas válidas',
+            'Verifique se o arquivo XLSX possui as abas PROCESSOS ou PEDIDOS preenchidas.',
             'warning'
           );
         }
       } catch (err) {
+        console.error('XLSX Parse Error:', err);
         addToast(
           'Erro ao processar arquivo XLSX',
           'Não foi possível ler a estrutura da planilha selecionada.',
@@ -300,15 +382,16 @@ export default function App() {
       }
     };
     reader.readAsArrayBuffer(file);
+    // Reset file input so the user can re-upload the exact same file after editing it in Excel
     e.target.value = '';
   };
 
   const handleLoadDemoData = () => {
     setProcessos(PROCESSOS_MFX);
+    setPedidosForecast(PEDIDOS_FORECAST_MFX);
     setAtosConcessorios(ATOS_CONCESSORIOS_MFX);
     setFilters(INITIAL_FILTERS);
-    setAppliedFilters(INITIAL_FILTERS);
-    setSourceFileName('FUP IMPORTAÇÃO BI.xlsx (Dados Demo MFX — PROCESSOS & PEDIDOS)');
+    setSourceFileName('FUP IMPORTAÇÃO BI_2.xlsx (Dados Reais MFX — PROCESSOS & PEDIDOS)');
     const now = new Date();
     setLastUpdatedTime(
       `${now.toLocaleDateString('pt-BR')} ${now.toLocaleTimeString('pt-BR', {
@@ -317,17 +400,22 @@ export default function App() {
       })}`
     );
     addToast(
-      'Dados Demo MFX Carregados',
-      `18 processos ativos (incluindo as 9 cargas paradas e os 7 Atos Concessórios) carregados na visão.`,
-      'info'
+      'Dados MFX (FUP IMPORTAÇÃO BI_2.xlsx) Carregados!',
+      `${PROCESSOS_MFX.length} processos (IMP-113/25 e IMP-001/26 a IMP-015/26) e ${PEDIDOS_FORECAST_MFX.length} pedidos sincronizados.`,
+      'success'
     );
   };
 
   const handleExportExcel = () => {
-    exportMfxToExcel(filteredProcessos, atosConcessorios, 'FUP_IMPORTACAO_BI_MFX_CONSOLIDADO.xlsx');
+    exportMfxToExcel(
+      filteredProcessos,
+      filteredAtosConcessorios,
+      pedidosForecast,
+      'FUP_IMPORTACAO_BI_2_MFX_CONSOLIDADO.xlsx'
+    );
     addToast(
       'Planilha Exportada (.XLSX)',
-      `O arquivo contendo as abas PROCESSOS (${filteredProcessos.length}), PEDIDOS e ATOS_CONCESSORIOS foi gerado.`,
+      `O arquivo FUP_IMPORTACAO_BI_2_MFX_CONSOLIDADO.xlsx contendo as 36 colunas de PROCESSOS, PEDIDOS e ATOS_CONCESSORIOS foi gerado.`,
       'success'
     );
   };
@@ -339,8 +427,10 @@ export default function App() {
         const updated: ImportProcess = {
           ...p,
           regime: 'Drawback Suspensão',
+          beneficioRaw: 'DRAWBACK',
           atoConcessorio: acId,
           status: p.cargaParadaDrawback ? 'No Porto/Aeroporto' : p.status,
+          statusRawExcel: p.cargaParadaDrawback ? 'EM DESEMBARAÇO' : p.statusRawExcel,
           cargaParadaDrawback: false,
           motivoParadaDrawback: undefined,
           impostosSuspensosDrawbackBRL: p.totalImpostosEstimadosBRL,
@@ -410,9 +500,27 @@ export default function App() {
       })
     );
 
+    setProcessos((prev) =>
+      prev.map((p) => {
+        if (p.atoConcessorio !== acId || !p.cargaParadaDrawback) return p;
+        const updated: ImportProcess = {
+          ...p,
+          status: 'No Porto/Aeroporto',
+          statusRawExcel: 'EM DESEMBARAÇO',
+          cargaParadaDrawback: false,
+          motivoParadaDrawback: undefined,
+          itens: p.itens.map((it) => ({ ...it, alertaLaudoTecnico: 'OK' })),
+        };
+        const nextRisk = computeProcessRisk(updated);
+        updated.riskLevel = nextRisk.riskLevel;
+        updated.riskReason = `Aditivo do ${acId} deferido · Liberado para Registro de DI`;
+        return updated;
+      })
+    );
+
     addToast(
       `Aditivo SECEX Deferido — ${acId}`,
-      'Quantidades 0,01 e divergências de NCM do Laudo Técnico foram retificadas. Saldo liberado para vínculo de DIs!',
+      'Quantidades 0,01 e divergências de NCM do Laudo Técnico foram retificadas e as cargas vinculadas foram destravadas!',
       'success'
     );
   };
@@ -486,7 +594,8 @@ export default function App() {
               >
                 <span>
                   <i className="fas fa-file-excel text-green-600 mr-1"></i>
-                  {t.lastUpdatePrefix} <strong className="text-gray-700 dark:text-gray-200">{sourceFileName}</strong>
+                  {t.lastUpdatePrefix}{' '}
+                  <strong className="text-gray-700 dark:text-gray-200">{sourceFileName}</strong>
                 </span>
                 <span>·</span>
                 <span className="font-mono tabular-nums">
@@ -581,7 +690,7 @@ export default function App() {
               id="file-upload"
               ref={excelInputRef}
               type="file"
-              accept=".xlsx,.xls"
+              accept=".xlsx,.xls,.csv"
               onChange={handleExcelUpload}
               className="hidden"
             />
@@ -665,7 +774,6 @@ export default function App() {
         filters={filters}
         setFilters={setFilters}
         onApplyFilters={() => {
-          setAppliedFilters(filters);
           addToast(
             'Filtros Aplicados',
             `Exibindo ${filteredProcessos.length} de ${processos.length} processos MFX.`,
@@ -674,7 +782,6 @@ export default function App() {
         }}
         onClearFilters={() => {
           setFilters(INITIAL_FILTERS);
-          setAppliedFilters(INITIAL_FILTERS);
           addToast('Filtros Limpos', 'Todos os filtros foram redefinidos.', 'info');
         }}
         availablePOs={availablePOs}
@@ -687,6 +794,8 @@ export default function App() {
         columnLabels={COLUMN_LABELS}
         lang={lang}
         activeFilterCount={activeFilterCount}
+        totalCount={processos.length}
+        filteredCount={filteredProcessos.length}
       />
 
       {/* =====================================================================
@@ -731,7 +840,7 @@ export default function App() {
       <DashboardCharts
         activeTab={activeTab}
         processos={filteredProcessos}
-        atosConcessorios={atosConcessorios}
+        atosConcessorios={filteredAtosConcessorios}
         darkMode={darkMode}
       />
 
@@ -742,7 +851,8 @@ export default function App() {
         {activeTab === 6 ? (
           <DetailedTableView
             processos={filteredProcessos}
-            atosConcessorios={atosConcessorios}
+            pedidosForecast={pedidosForecast}
+            atosConcessorios={filteredAtosConcessorios}
             visibleColumns={visibleColumns}
             onSelectProcess={(proc, subTab = 'overview') => {
               setSelectedAC(null);
@@ -759,7 +869,7 @@ export default function App() {
           <DashboardGrid
             activeTab={activeTab}
             processos={filteredProcessos}
-            atosConcessorios={atosConcessorios}
+            atosConcessorios={filteredAtosConcessorios}
             onSelectProcess={(proc, subTab = 'overview') => {
               setSelectedAC(null);
               setModalInitialTab(subTab);

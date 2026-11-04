@@ -53,7 +53,7 @@ export const DashboardCharts: React.FC<DashboardChartsProps> = ({
           color: textColor,
           font: { family: "'Inter', sans-serif", size: 11, weight: '600' },
           boxWidth: 12,
-          padding: 12,
+          padding: 10,
         },
       },
       tooltip: {
@@ -70,6 +70,7 @@ export const DashboardCharts: React.FC<DashboardChartsProps> = ({
         grid: { color: gridColor },
       },
       y: {
+        beginAtZero: true,
         ticks: { color: textColor, font: { family: "'JetBrains Mono', monospace", size: 10 } },
         grid: { color: gridColor },
       },
@@ -89,19 +90,26 @@ export const DashboardCharts: React.FC<DashboardChartsProps> = ({
           padding: 10,
         },
       },
+      tooltip: {
+        backgroundColor: darkMode ? '#111827' : '#1e293b',
+        titleFont: { family: "'Inter', sans-serif", size: 12, weight: '700' },
+        bodyFont: { family: "'JetBrains Mono', monospace", size: 11 },
+        padding: 10,
+        cornerRadius: 6,
+      },
     },
   };
 
-  // === TAB 1 CHARTS: Forecast de POs & Entregas ===
+  // ==========================================================================
+  // TAB 1 CHARTS: Forecast de POs & Entregas
+  // ==========================================================================
   if (activeTab === 1) {
     const emProducao = processos.filter((p) => p.status === 'Em Produção Fornecedor').length;
     const cargaPronta = processos.filter((p) => p.status === 'Ag. Embarque').length;
     const embarcado = processos.filter((p) => p.status === 'Em Trânsito').length;
+    const paradoDrawback = processos.filter((p) => p.status === 'Parado Ag. Drawback').length;
     const emDesembaraco = processos.filter(
-      (p) =>
-        p.status === 'No Porto/Aeroporto' ||
-        p.status === 'Parado Ag. Drawback' ||
-        p.status === 'Desembaraçado'
+      (p) => p.status === 'No Porto/Aeroporto' || p.status === 'Desembaraçado'
     ).length;
     const entregue = processos.filter((p) => p.status === 'Entregue MFX').length;
 
@@ -109,15 +117,16 @@ export const DashboardCharts: React.FC<DashboardChartsProps> = ({
       labels: [
         '1. Em Produção',
         '2. Carga Pronta',
-        '3. Embarcado (BL/AWB)',
-        '4. Porto / Desembaraço',
-        '5. Entregue MFX',
+        '3. Embarcado',
+        '4. Parado Drawback',
+        '5. Em Desembaraço',
+        '6. Entregue MFX',
       ],
       datasets: [
         {
           label: 'Qtd Processos / POs',
-          data: [emProducao, cargaPronta, embarcado, emDesembaraco, entregue],
-          backgroundColor: ['#6366f1', '#3b82f6', '#0ea5e9', '#f97316', '#22c55e'],
+          data: [emProducao, cargaPronta, embarcado, paradoDrawback, emDesembaraco, entregue],
+          backgroundColor: ['#6366f1', '#3b82f6', '#0ea5e9', '#ef4444', '#f97316', '#22c55e'],
           borderRadius: 6,
         },
       ],
@@ -125,7 +134,10 @@ export const DashboardCharts: React.FC<DashboardChartsProps> = ({
 
     const projetosList = ['PETROBRAS', 'PRIO', 'EXPANSÃO 140 CNTR', 'ESTOQUE'] as const;
     const chart2Data = {
-      labels: ['PETROBRAS', 'PRIO', 'EXPANSÃO 140 CNTR', 'ESTOQUE'],
+      labels: projetosList.map((proj) => {
+        const count = processos.filter((p) => p.projeto === proj).length;
+        return `${proj} (${count} POs)`;
+      }),
       datasets: [
         {
           label: 'Valor VMLD (R$ Milhões)',
@@ -146,7 +158,8 @@ export const DashboardCharts: React.FC<DashboardChartsProps> = ({
 
     const activeArrivals = processos
       .filter((p) => p.status !== 'Entregue MFX')
-      .slice(0, 8);
+      .slice(0, 10);
+
     const chart3Data = {
       labels: activeArrivals.map((p) => `${p.id} (${p.modal === 'AÉREO' ? 'AIR' : 'SEA'})`),
       datasets: [
@@ -159,9 +172,9 @@ export const DashboardCharts: React.FC<DashboardChartsProps> = ({
           borderRadius: 4,
         },
         {
-          label: 'Atraso vs. PO (Dias)',
+          label: 'Atraso ETA vs. PO (Dias)',
           data: activeArrivals.map((p) => p.atrasoEtaDias),
-          backgroundColor: '#ef4444',
+          backgroundColor: '#dc2626',
           borderRadius: 4,
         },
       ],
@@ -179,7 +192,7 @@ export const DashboardCharts: React.FC<DashboardChartsProps> = ({
             </span>
           </div>
           <div className="h-60">
-            <Bar data={chart1Data} options={commonOptions} />
+            <Bar key={`t1-c1-${darkMode}`} data={chart1Data} options={commonOptions} />
           </div>
         </div>
 
@@ -193,7 +206,7 @@ export const DashboardCharts: React.FC<DashboardChartsProps> = ({
             </span>
           </div>
           <div className="h-60">
-            <Doughnut data={chart2Data} options={pieOptions} />
+            <Doughnut key={`t1-c2-${darkMode}`} data={chart2Data} options={pieOptions} />
           </div>
         </div>
 
@@ -207,14 +220,16 @@ export const DashboardCharts: React.FC<DashboardChartsProps> = ({
             </span>
           </div>
           <div className="h-60">
-            <Bar data={chart3Data} options={commonOptions} />
+            <Bar key={`t1-c3-${darkMode}`} data={chart3Data} options={commonOptions} />
           </div>
         </div>
       </div>
     );
   }
 
-  // === TAB 2 CHARTS: Análise de KPIs & Lead Times ===
+  // ==========================================================================
+  // TAB 2 CHARTS: Análise de KPIs & Lead Times
+  // ==========================================================================
   if (activeTab === 2) {
     const maritimos = processos.filter((p) => p.modal === 'MARÍTIMO');
     const aereos = processos.filter((p) => p.modal === 'AÉREO');
@@ -223,7 +238,10 @@ export const DashboardCharts: React.FC<DashboardChartsProps> = ({
       arr.length ? Number((arr.reduce((s, x) => s + fn(x), 0) / arr.length).toFixed(1)) : 0;
 
     const chart1Data = {
-      labels: ['Modal Marítimo (FCL)', 'Modal Aéreo (TECA SSA)'],
+      labels: [
+        `Marítimo FCL (${maritimos.length})`,
+        `Aéreo TECA SSA (${aereos.length})`,
+      ],
       datasets: [
         {
           label: 'Transit Time (ETA - ETD)',
@@ -233,12 +251,15 @@ export const DashboardCharts: React.FC<DashboardChartsProps> = ({
         },
         {
           label: 'Desembaraço / Retenção (Dias)',
-          data: [avg(maritimos, (p) => p.tempoDesembaracoDias), avg(aereos, (p) => p.tempoDesembaracoDias)],
+          data: [
+            avg(maritimos, (p) => p.tempoDesembaracoDias),
+            avg(aereos, (p) => p.tempoDesembaracoDias),
+          ],
           backgroundColor: '#f97316',
           borderRadius: 4,
         },
         {
-          label: 'Entrega Rodoviária MFX',
+          label: 'Entrega Rodoviária MFX (Dias)',
           data: [
             avg(maritimos, (p) => p.tempoEntregaRodoviariaDias),
             avg(aereos, (p) => p.tempoEntregaRodoviariaDias),
@@ -257,11 +278,11 @@ export const DashboardCharts: React.FC<DashboardChartsProps> = ({
 
     const chart2Data = {
       labels: [
-        'Canal Verde',
-        'Canal Amarelo',
-        'Canal Vermelho',
-        'LI Anuente (ANP/INMETRO)',
-        'Ag. Registro DI (Drawback/Trânsito)',
+        `Canal Verde (${verde})`,
+        `Canal Amarelo (${amarelo})`,
+        `Canal Vermelho (${vermelho})`,
+        `LI Anuente ANP/INMETRO (${liAnuente})`,
+        `Ag. Registro DI (${pendenteReg})`,
       ],
       datasets: [
         {
@@ -279,8 +300,11 @@ export const DashboardCharts: React.FC<DashboardChartsProps> = ({
         {
           label: 'Lead Time Total Médio (Dias)',
           data: agentes.map((ag) => {
-            const list = processos.filter((p) => p.agenteCarga === ag);
-            return avg(list, (p) => p.transitTimeDias + p.tempoDesembaracoDias + p.tempoEntregaRodoviariaDias);
+            const list = processos.filter((p) => p.agenteCarga.toUpperCase() === ag.toUpperCase());
+            return avg(
+              list,
+              (p) => p.transitTimeDias + p.tempoDesembaracoDias + p.tempoEntregaRodoviariaDias
+            );
           }),
           backgroundColor: '#0ea5e9',
           borderRadius: 5,
@@ -288,7 +312,7 @@ export const DashboardCharts: React.FC<DashboardChartsProps> = ({
         {
           label: 'Free Time Médio Restante (Dias)',
           data: agentes.map((ag) => {
-            const list = processos.filter((p) => p.agenteCarga === ag);
+            const list = processos.filter((p) => p.agenteCarga.toUpperCase() === ag.toUpperCase());
             return avg(list, (p) => p.freeTimeDiasRestantes);
           }),
           backgroundColor: '#10b981',
@@ -307,7 +331,7 @@ export const DashboardCharts: React.FC<DashboardChartsProps> = ({
             <span className="text-xs font-mono text-gray-500 dark:text-gray-400">Marítimo vs. Aéreo</span>
           </div>
           <div className="h-60">
-            <Bar data={chart1Data} options={commonOptions} />
+            <Bar key={`t2-c1-${darkMode}`} data={chart1Data} options={commonOptions} />
           </div>
         </div>
 
@@ -319,7 +343,7 @@ export const DashboardCharts: React.FC<DashboardChartsProps> = ({
             <span className="text-xs font-mono text-gray-500 dark:text-gray-400">Receita Federal</span>
           </div>
           <div className="h-60">
-            <Doughnut data={chart2Data} options={pieOptions} />
+            <Doughnut key={`t2-c2-${darkMode}`} data={chart2Data} options={pieOptions} />
           </div>
         </div>
 
@@ -331,35 +355,55 @@ export const DashboardCharts: React.FC<DashboardChartsProps> = ({
             <span className="text-xs font-mono text-gray-500 dark:text-gray-400">SLA Desembaraço</span>
           </div>
           <div className="h-60">
-            <Bar data={chart3Data} options={commonOptions} />
+            <Bar key={`t2-c3-${darkMode}`} data={chart3Data} options={commonOptions} />
           </div>
         </div>
       </div>
     );
   }
 
-  // === TAB 3 CHARTS: Custos, Cashflow (PO/CI) & Impostos ===
+  // ==========================================================================
+  // TAB 3 CHARTS: Custos, Cashflow (PO/CI) & Impostos
+  // ==========================================================================
   if (activeTab === 3) {
-    const condicoes = ['30 DDL', '60 DDL', '90 DDL', '180 DDL', '360 DDL'] as const;
-    const chart1Data = {
-      labels: condicoes.map((c) => `Venc. ${c}`),
-      datasets: [
-        {
-          label: 'Desembolso Projetado (R$ Mil)',
-          data: condicoes.map((c) =>
-            Math.round(
-              processos
-                .filter((p) => p.condicaoPagamento === c)
-                .reduce((acc, p) => acc + p.vmleBRL, 0) / 1000
-            )
-          ),
-          backgroundColor: ['#ef4444', '#f97316', '#3b82f6', '#6366f1', '#10b981'],
-          borderRadius: 6,
-        },
-      ],
+    // Group by Invoice Maturity Month + Stacked by Payment Condition (30, 60, 90, 180, 360 DDL)
+    const monthBuckets = Array.from(
+      new Set(processos.map((p) => p.dataVencimentoInvoice.slice(0, 7)))
+    ).sort();
+    const displayMonths = monthBuckets.length > 0 ? monthBuckets : ['2026-12', '2027-01'];
+
+    const condColors: Record<string, string> = {
+      '30 DDL': '#ef4444',
+      '60 DDL': '#f97316',
+      '90 DDL': '#3b82f6',
+      '180 DDL': '#6366f1',
+      '360 DDL': '#10b981',
     };
 
-    const topCIs = processos.slice(0, 7);
+    const condicoes = ['30 DDL', '60 DDL', '90 DDL', '180 DDL', '360 DDL'] as const;
+    const chart1Data = {
+      labels: displayMonths.map((ym) => {
+        const [y, m] = ym.split('-');
+        return `${m}/${y.slice(2)}`;
+      }),
+      datasets: condicoes.map((cond) => ({
+        label: cond,
+        data: displayMonths.map((ym) =>
+          Math.round(
+            processos
+              .filter(
+                (p) =>
+                  p.dataVencimentoInvoice.startsWith(ym) && p.condicaoPagamento === cond
+              )
+              .reduce((acc, p) => acc + p.vmleBRL, 0) / 1000
+          )
+        ),
+        backgroundColor: condColors[cond],
+        borderRadius: 3,
+      })),
+    };
+
+    const topCIs = processos.slice(0, 8);
     const chart2Data = {
       labels: topCIs.map((p) => p.id),
       datasets: [
@@ -375,7 +419,9 @@ export const DashboardCharts: React.FC<DashboardChartsProps> = ({
         },
         {
           label: 'Armazenagem & Desp. Aduaneiras (R$ Mil)',
-          data: topCIs.map((p) => Math.round((p.despesasAduaneirasBRL + p.armazenagemAcumuladaBRL) / 1000)),
+          data: topCIs.map((p) =>
+            Math.round((p.despesasAduaneirasBRL + p.armazenagemAcumuladaBRL) / 1000)
+          ),
           backgroundColor: '#ef4444',
         },
       ],
@@ -397,9 +443,9 @@ export const DashboardCharts: React.FC<DashboardChartsProps> = ({
 
     const chart3Data = {
       labels: [
-        'Suspensos via Drawback (Economia)',
-        'Vazamento Fiscal (Pago s/ AC)',
-        'Recolhimento Normal (Estoque)',
+        `Suspensos Drawback (R$ ${(totalSuspenso / 1_000_000).toFixed(2)}M)`,
+        `Vazamento Recolhimento Indevido (R$ ${(totalVazamento / 1000).toFixed(0)}k)`,
+        `Recolhimento Normal Estoque (R$ ${(totalEstoqueNormal / 1000).toFixed(0)}k)`,
       ],
       datasets: [
         {
@@ -419,12 +465,12 @@ export const DashboardCharts: React.FC<DashboardChartsProps> = ({
         <div className="bg-white dark:bg-[#1f2937] p-5 rounded-xl shadow border border-gray-200 dark:border-[#374151]">
           <div className="flex items-center justify-between mb-3">
             <h3 className="text-sm font-bold text-gray-800 dark:text-gray-100">
-              <i className="fas fa-calendar-check text-blue-600 mr-2"></i>Cashflow de POs / Invoices por Prazo
+              <i className="fas fa-calendar-check text-blue-600 mr-2"></i>Cashflow Mensal de POs / PIs (R$ Mil)
             </h3>
-            <span className="text-xs font-mono text-gray-500 dark:text-gray-400">Convertido PTAX (R$ Mil)</span>
+            <span className="text-xs font-mono text-gray-500 dark:text-gray-400">Por Venc. & Prazo</span>
           </div>
           <div className="h-60">
-            <Bar data={chart1Data} options={commonOptions} />
+            <Bar key={`t3-c1-${darkMode}`} data={chart1Data} options={stackedOptions} />
           </div>
         </div>
 
@@ -436,7 +482,7 @@ export const DashboardCharts: React.FC<DashboardChartsProps> = ({
             <span className="text-xs font-mono text-gray-500 dark:text-gray-400">VMLD + Impostos + Porto</span>
           </div>
           <div className="h-60">
-            <Bar data={chart2Data} options={stackedOptions} />
+            <Bar key={`t3-c2-${darkMode}`} data={chart2Data} options={stackedOptions} />
           </div>
         </div>
 
@@ -450,16 +496,18 @@ export const DashboardCharts: React.FC<DashboardChartsProps> = ({
             </span>
           </div>
           <div className="h-60">
-            <Doughnut data={chart3Data} options={pieOptions} />
+            <Doughnut key={`t3-c3-${darkMode}`} data={chart3Data} options={pieOptions} />
           </div>
         </div>
       </div>
     );
   }
 
-  // === TAB 4 CHARTS: Fretes, Rodoviário & Saving ===
+  // ==========================================================================
+  // TAB 4 CHARTS: Fretes, Rodoviário & Saving
+  // ==========================================================================
   if (activeTab === 4) {
-    const sampleProcs = processos.slice(0, 8);
+    const sampleProcs = processos.slice(0, 9);
     const chart1Data = {
       labels: sampleProcs.map((p) => p.id),
       datasets: [
@@ -478,7 +526,7 @@ export const DashboardCharts: React.FC<DashboardChartsProps> = ({
       ],
     };
 
-    const agentes = ['DSV', 'DHL', 'KN', 'FEDEX', 'Hellmann'] as const;
+    const agentes = ['DSV', 'DHL', 'KN', 'FEDEX', 'Hellmann'];
     const chart2Data = {
       labels: agentes,
       datasets: [
@@ -488,7 +536,7 @@ export const DashboardCharts: React.FC<DashboardChartsProps> = ({
             Number(
               (
                 processos
-                  .filter((p) => p.agenteCarga === ag)
+                  .filter((p) => p.agenteCarga.toUpperCase() === ag.toUpperCase())
                   .reduce((s, p) => s + p.savingFreteBRL, 0) / 1000
               ).toFixed(1)
             )
@@ -499,13 +547,20 @@ export const DashboardCharts: React.FC<DashboardChartsProps> = ({
       ],
     };
 
-    const transportadoras = ['JSL Heavy', 'Patrus Transportes', 'TNT Mercúrio', 'Braspress', 'Translovato'];
+    const transportadoras = Array.from(
+      new Set(processos.map((p) => p.transportadoraNacional))
+    );
+    const displayTransp =
+      transportadoras.length > 0
+        ? transportadoras
+        : ['JSL Heavy', 'Patrus Transportes', 'TNT Mercúrio', 'Braspress'];
+
     const chart3Data = {
-      labels: transportadoras,
+      labels: displayTransp,
       datasets: [
         {
           label: 'Frete Internacional Vinculado (R$ Mil)',
-          data: transportadoras.map((tr) =>
+          data: displayTransp.map((tr) =>
             Math.round(
               processos
                 .filter((p) => p.transportadoraNacional === tr)
@@ -517,7 +572,7 @@ export const DashboardCharts: React.FC<DashboardChartsProps> = ({
         },
         {
           label: 'Frete Rodoviário Nacional até MFX (R$ Mil)',
-          data: transportadoras.map((tr) =>
+          data: displayTransp.map((tr) =>
             Math.round(
               processos
                 .filter((p) => p.transportadoraNacional === tr)
@@ -542,7 +597,7 @@ export const DashboardCharts: React.FC<DashboardChartsProps> = ({
             </span>
           </div>
           <div className="h-60">
-            <Bar data={chart1Data} options={commonOptions} />
+            <Bar key={`t4-c1-${darkMode}`} data={chart1Data} options={commonOptions} />
           </div>
         </div>
 
@@ -554,7 +609,7 @@ export const DashboardCharts: React.FC<DashboardChartsProps> = ({
             <span className="text-xs font-mono text-gray-500 dark:text-gray-400">Negociação Comex</span>
           </div>
           <div className="h-60">
-            <Bar data={chart2Data} options={commonOptions} />
+            <Bar key={`t4-c2-${darkMode}`} data={chart2Data} options={commonOptions} />
           </div>
         </div>
 
@@ -566,14 +621,16 @@ export const DashboardCharts: React.FC<DashboardChartsProps> = ({
             <span className="text-xs font-mono text-gray-500 dark:text-gray-400">Por Transportadora</span>
           </div>
           <div className="h-60">
-            <Bar data={chart3Data} options={commonOptions} />
+            <Bar key={`t4-c3-${darkMode}`} data={chart3Data} options={commonOptions} />
           </div>
         </div>
       </div>
     );
   }
 
-  // === TAB 5 CHARTS: Controle de Drawback (7 ACs) ===
+  // ==========================================================================
+  // TAB 5 CHARTS: Controle de Drawback (7 ACs) & Stalled Cargoes
+  // ==========================================================================
   const stalledCargoes = processos.filter((p) => p.cargaParadaDrawback);
 
   const chart1Data = {
@@ -605,41 +662,61 @@ export const DashboardCharts: React.FC<DashboardChartsProps> = ({
       },
       {
         label: 'Benefício Fiscal Drawback (R$ Mil)',
-        data: stalledCargoes.map((p) => Number((p.impostosSuspensosDrawbackBRL / 1000).toFixed(1))),
+        data: stalledCargoes.map((p) =>
+          Number((p.impostosSuspensosDrawbackBRL / 1000).toFixed(1))
+        ),
         backgroundColor: '#22c55e',
         borderRadius: 4,
       },
     ],
   };
 
+  // Dynamically compute Laudo Técnico stats from current ACs & Processes
+  const totalAcItems = atosConcessorios.reduce((s, ac) => s + ac.totalItensCadastrados, 0);
+  const totalDivergenciasAC = atosConcessorios.reduce(
+    (s, ac) => s + ac.itensComDivergenciaLaudo,
+    0
+  );
+  const qtdIrrisoriaCount = atosConcessorios.reduce(
+    (s, ac) =>
+      s +
+      ac.itensDetalhados.filter((it) => it.alertaAuditoria === 'Qtd Irrisória (0,01)').length,
+    0
+  );
+  const ncmDivergenteCount = Math.max(0, totalDivergenciasAC - qtdIrrisoriaCount);
+  const itensRegularesCount = Math.max(0, totalAcItems - totalDivergenciasAC);
+
   const chart3Data = {
     labels: [
-      'Itens Regulares c/ Laudo Validado (297)',
-      'Itens c/ Qtd Irrisória 0,01 no AC (6)',
-      'Itens c/ NCM Divergente entre ACs (5)',
+      `Itens Regulares c/ Laudo Validado (${itensRegularesCount})`,
+      `Itens c/ Qtd Irrisória 0,01 no AC (${qtdIrrisoriaCount})`,
+      `Itens c/ NCM Divergente entre ACs (${ncmDivergenteCount})`,
     ],
     datasets: [
       {
-        data: [297, 6, 5],
+        data: [itensRegularesCount, qtdIrrisoriaCount, ncmDivergenteCount],
         backgroundColor: ['#22c55e', '#ef4444', '#f97316'],
         borderWidth: 1,
       },
     ],
   };
 
+  const emAlteracaoCount = atosConcessorios.filter((a) => a.statusAC === 'Em Alteração').length;
+
   return (
     <div id="charts-container" className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
       <div className="bg-white dark:bg-[#1f2937] p-5 rounded-xl shadow border border-gray-200 dark:border-[#374151]">
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-sm font-bold text-gray-800 dark:text-gray-100">
-            <i className="fas fa-shield-halved text-blue-600 mr-2"></i>Status dos 7 Atos Concessórios (USD Mil)
+            <i className="fas fa-shield-halved text-blue-600 mr-2"></i>Status dos {atosConcessorios.length} Atos Concessórios (USD Mil)
           </h3>
           <span className="text-xs font-mono text-orange-600 dark:text-orange-400 font-semibold">
-            3 Em Alteração SECEX
+            {emAlteracaoCount} Em Alteração SECEX
           </span>
         </div>
         <div className="h-60">
           <Bar
+            key={`t5-c1-${darkMode}`}
             data={chart1Data}
             options={{
               ...commonOptions,
@@ -662,21 +739,21 @@ export const DashboardCharts: React.FC<DashboardChartsProps> = ({
           </span>
         </div>
         <div className="h-60">
-          <Bar data={chart2Data} options={commonOptions} />
+          <Bar key={`t5-c2-${darkMode}`} data={chart2Data} options={commonOptions} />
         </div>
       </div>
 
       <div className="bg-white dark:bg-[#1f2937] p-5 rounded-xl shadow border border-gray-200 dark:border-[#374151]">
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-sm font-bold text-gray-800 dark:text-gray-100">
-            <i className="fas fa-clipboard-check text-amber-500 mr-2"></i>Auditoria de Laudos Técnicos (~308 Itens)
+            <i className="fas fa-clipboard-check text-amber-500 mr-2"></i>Auditoria de Laudos Técnicos ({totalAcItems} Itens)
           </h3>
           <span className="text-xs font-mono text-red-600 dark:text-red-400 font-semibold">
-            11 Divergências Críticas
+            {totalDivergenciasAC} Divergências Críticas
           </span>
         </div>
         <div className="h-60">
-          <Doughnut data={chart3Data} options={pieOptions} />
+          <Doughnut key={`t5-c3-${darkMode}`} data={chart3Data} options={pieOptions} />
         </div>
       </div>
     </div>

@@ -276,6 +276,7 @@ export interface FilterState {
   etaEnd: string;
   cashflowStart: string;
   cashflowEnd: string;
+  showDelivered?: boolean;
 }
 
 export type LanguageCode = 'pt' | 'en' | 'zh';

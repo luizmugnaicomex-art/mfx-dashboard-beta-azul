@@ -263,10 +263,63 @@ export const FilterPanel: React.FC<FilterPanelProps> = ({
           <div className="flex flex-col lg:flex-row items-stretch lg:items-end justify-between gap-4 pt-2 border-t border-gray-100 dark:border-gray-700/60">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 flex-1">
               <div>
-                <label className="block text-[11px] font-bold text-gray-600 dark:text-gray-400 mb-1">
-                  <i className="fas fa-calendar-day mr-1 text-blue-600"></i>
-                  {t.etaRangeLabel} (Início / Fim)
-                </label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-[11px] font-bold text-gray-600 dark:text-gray-400">
+                    <i className="fas fa-calendar-day mr-1 text-blue-600"></i>
+                    {t.etaRangeLabel} (Início / Fim)
+                  </label>
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const now = new Date();
+                        const d = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+                        const day = d.getDay();
+                        const diffToMon = day === 0 ? -6 : 1 - day;
+                        const mon = new Date(d);
+                        mon.setDate(d.getDate() + diffToMon);
+                        const sun = new Date(mon);
+                        sun.setDate(mon.getDate() + 6);
+                        const toIso = (dt: Date) => dt.toISOString().slice(0, 10);
+                        setFilters((prev) => ({ ...prev, etaStart: toIso(mon), etaEnd: toIso(sun) }));
+                      }}
+                      className="text-[10px] font-bold text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
+                    >
+                      Esta Sem.
+                    </button>
+                    <span className="text-gray-300">·</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const now = new Date();
+                        const d = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+                        const day = d.getDay();
+                        const diffToMon = day === 0 ? -6 : 1 - day;
+                        const mon = new Date(d);
+                        mon.setDate(d.getDate() + diffToMon + 7);
+                        const sun = new Date(mon);
+                        sun.setDate(mon.getDate() + 6);
+                        const toIso = (dt: Date) => dt.toISOString().slice(0, 10);
+                        setFilters((prev) => ({ ...prev, etaStart: toIso(mon), etaEnd: toIso(sun) }));
+                      }}
+                      className="text-[10px] font-bold text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
+                    >
+                      Próx. Sem.
+                    </button>
+                    {(filters.etaStart || filters.etaEnd) && (
+                      <>
+                        <span className="text-gray-300">·</span>
+                        <button
+                          type="button"
+                          onClick={() => setFilters((prev) => ({ ...prev, etaStart: '', etaEnd: '' }))}
+                          className="text-[10px] text-gray-500 hover:underline cursor-pointer"
+                        >
+                          Limpar
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
                 <div className="grid grid-cols-2 gap-2">
                   <input
                     type="date"
@@ -309,8 +362,30 @@ export const FilterPanel: React.FC<FilterPanelProps> = ({
               </div>
             </div>
 
-            {/* Action Buttons: Filtrar, Limpar, Colunas */}
-            <div className="flex items-center gap-2 shrink-0 relative" ref={dropdownRef}>
+            {/* Action Buttons: Mostrar Entregues, Filtrar, Limpar, Colunas */}
+            <div className="flex flex-wrap items-center gap-2 shrink-0 relative" ref={dropdownRef}>
+              {/* Flag "Mostrar Entregues" */}
+              <label
+                htmlFor="global-filter-show-delivered"
+                className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-md border text-xs font-semibold cursor-pointer select-none transition-colors ${
+                  filters.showDelivered
+                    ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-900 dark:text-emerald-200'
+                    : 'border-gray-300 dark:border-[#374151] bg-gray-50 dark:bg-[#111827] text-gray-700 dark:text-gray-300'
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  id="global-filter-show-delivered"
+                  checked={Boolean(filters.showDelivered)}
+                  onChange={(e) => setFilters((prev) => ({ ...prev, showDelivered: e.target.checked }))}
+                  className="w-3.5 h-3.5 text-blue-600 rounded focus:ring-blue-500 cursor-pointer"
+                />
+                <span>Mostrar Entregues</span>
+                <span className="text-[10px] px-1.5 py-0.2 rounded-full font-mono bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300">
+                  {filters.showDelivered ? 'visíveis' : 'ocultos'}
+                </span>
+              </label>
+
               <button
                 type="button"
                 onClick={onApplyFilters}

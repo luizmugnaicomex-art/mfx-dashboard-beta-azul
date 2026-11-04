@@ -26,6 +26,7 @@ import {
   subscribeToOnlineProcessos,
   publishToCloudFirestore,
 } from './services/firebaseService';
+import { isImportProcessDelivered } from './utils/deliveryFilter';
 
 const INITIAL_FILTERS: FilterState = {
   pos: [],
@@ -42,6 +43,7 @@ const INITIAL_FILTERS: FilterState = {
   etaEnd: '',
   cashflowStart: '',
   cashflowEnd: '',
+  showDelivered: false,
 };
 
 const DEFAULT_VISIBLE_COLUMNS: Record<string, boolean> = {
@@ -273,6 +275,12 @@ export default function App() {
     const selectedForwarders = f.agentes.filter((x) => !despOptions.includes(x));
 
     return processos.filter((p) => {
+      // RULE: Hide Delivered by default unless showDelivered flag is true or user explicitly selected 'Entregue MFX' in status filter
+      const isDelivered = isImportProcessDelivered(p);
+      if (!f.showDelivered && isDelivered && !f.status.includes('Entregue MFX')) {
+        return false;
+      }
+
       if (f.pos.length > 0) {
         const matchPOOrRef = f.pos.some(
           (sel) =>

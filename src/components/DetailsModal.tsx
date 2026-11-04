@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { ImportProcess, AtoConcessorio } from '../types/mfx';
+import { getProcessStage, detectDateInconsistencies } from '../utils/excelParser';
 
 interface DetailsModalProps {
   selectedProcess: ImportProcess | null;
@@ -286,47 +287,136 @@ export const DetailsModal: React.FC<DetailsModalProps> = ({
   const p = selectedProcess;
   const currentACObj = allACs.find((a) => a.id === chosenAC) || allACs[0];
 
-  const steps = [
+  const rawFupStatus = p.statusRawExcel || p.status;
+  const stage = p.stageNumber ?? getProcessStage(rawFupStatus);
+  const { alertaEtaVencido, alertaEntregaAtrasada } = detectDateInconsistencies(
+    stage,
+    p.eta,
+    p.prazoEntregaMFX
+  );
+  const isEtaExpired = Boolean(p.alertaEtaVencido || alertaEtaVencido);
+  const isDeliveryOverdue = Boolean(p.alertaEntregaAtrasada || alertaEntregaAtrasada);
+
+  const poTokens =
+    p.posList && p.posList.length > 0
+      ? p.posList
+      : p.oc
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean);
+
+  type TimelineStepState = 'completed' | 'current' | 'blocked' | 'forecast';
+  const steps: {
+    label: string;
+    sub: string;
+    date: string;
+    state: TimelineStepState;
+    badgeText: string;
+  }[] = [
     {
       label: '1. Pedido (OC)',
-      sub: p.oc,
+      sub:
+        poTokens.length > 2
+          ? `${poTokens.slice(0, 2).join(', ')} (+${poTokens.length - 2})`
+          : p.oc,
       date: p.dataPO,
-      done: true,
+      state: 'completed',
+      badgeText: 'Concluído',
     },
     {
       label: '2. Embarque (BL/AWB)',
-      sub: p.blAwb,
-      date: p.etd,
-      done: p.status !== 'Em Produção Fornecedor' && p.status !== 'Ag. Embarque',
+      sub:
+        stage >= 3
+          ? p.blAwb
+          : stage === 2
+          ? p.blAwb && p.blAwb !== 'A DEFINIR'
+            ? p.blAwb
+            : 'Ag. Embarque'
+          : 'Aguardando Prontidão',
+      date:
+        stage >= 3
+          ? p.etd
+          : `Prev: ${p.etd && p.etd !== 'Aguardando' ? p.etd : p.dataProntidaoCarga}`,
+      state: stage >= 3 ? 'completed' : stage === 2 ? 'current' : 'forecast',
+      badgeText: stage >= 3 ? 'Embarcado' : stage === 2 ? 'Etapa Atual' : 'Previsto',
     },
     {
       label: '3. Chegada Brasil',
-      sub: p.portoAeroportoDestino.split('(')[0],
-      date: p.dataChegadaEfetiva || p.eta,
-      done:
-        p.status === 'No Porto/Aeroporto' ||
-        p.status === 'Parado Ag. Drawback' ||
-        p.status === 'Desembaraçado' ||
-        p.status === 'Entregue MFX',
+      sub:
+        stage >= 4
+          ? p.portoAeroportoDestino.split('(')[0].trim()
+          : stage === 3
+          ? `Ag. Chegada (${p.portoAeroportoDestino.split('(')[0].trim()})`
+          : p.portoAeroportoDestino.split('(')[0].trim(),
+      date:
+        stage >= 4
+          ? p.dataChegadaEfetiva || p.eta
+          : stage === 3
+          ? `ETA Previsto: ${p.eta}`
+          : `Previsão: ${p.eta}`,
+      state: stage >= 4 ? 'completed' : stage === 3 ? 'current' : 'forecast',
+      badgeText:
+        stage >= 4 ? 'Chegou' : stage === 3 ? 'Etapa Atual (Ag. Chegada)' : 'Previsto',
     },
     {
       label: '4. Registro DI/DUIMP',
-      sub: p.numeroDiDuimp,
-      date: p.dataRegistroDI || (p.cargaParadaDrawback ? 'Bloqueado AC' : 'Ag. Chegada'),
-      done: p.status === 'Desembaraçado' || p.status === 'Entregue MFX' || Boolean(p.dataRegistroDI),
-      blocked: p.cargaParadaDrawback,
+      sub:
+        stage >= 5
+          ? p.numeroDiDuimp
+          : stage === 4
+          ? p.cargaParadaDrawback
+            ? 'Bloqueado Drawback'
+            : 'Ag. Registro DI'
+          : 'Aguardando Chegada',
+      date:
+        stage >= 5
+          ? p.dataRegistroDI || p.eta
+          : stage === 4
+          ? p.cargaParadaDrawback
+            ? 'Ag. Ato Concessório'
+            : `Previsão: ${p.dataRegistroDI || p.eta}`
+          : `Previsão: ${p.dataRegistroDI || p.eta}`,
+      state:
+        stage >= 5
+          ? 'completed'
+          : stage === 4
+          ? p.cargaParadaDrawback
+            ? 'blocked'
+            : 'current'
+          : 'forecast',
+      badgeText:
+        stage >= 5
+          ? 'DI Registrada'
+          : stage === 4
+          ? p.cargaParadaDrawback
+            ? 'Bloqueado AC'
+            : 'Etapa Atual'
+          : 'Previsto',
     },
     {
       label: '5. Desembaraço',
-      sub: `Canal ${p.canal}`,
-      date: p.dataDesembaraco || 'Pendente',
-      done: p.status === 'Desembaraçado' || p.status === 'Entregue MFX',
+      sub:
+        stage >= 5 && p.canal !== 'Pendente Registro'
+          ? `Canal ${p.canal}`
+          : 'Pendente Registro',
+      date:
+        stage >= 6
+          ? p.dataDesembaraco || p.eta
+          : `Previsão: ${p.dataDesembaraco || p.eta}`,
+      state: stage >= 6 ? 'completed' : stage === 5 ? 'current' : 'forecast',
+      badgeText:
+        stage >= 6 ? 'Desembaraçado' : stage === 5 ? 'Etapa Atual' : 'Previsto',
     },
     {
       label: '6. Entrega MFX',
-      sub: p.transportadoraNacional,
-      date: p.dataEntregaMFX || `Prev: ${p.prazoEntregaMFX}`,
-      done: p.status === 'Entregue MFX',
+      sub: stage >= 6 ? p.transportadoraNacional : 'Aguardando Liberação',
+      date:
+        stage === 7
+          ? p.dataEntregaMFX || p.prazoEntregaMFX
+          : `Previsão: ${p.prazoEntregaMFX}`,
+      state: stage === 7 ? 'completed' : stage === 6 ? 'current' : 'forecast',
+      badgeText:
+        stage === 7 ? 'Entregue MFX' : stage === 6 ? 'Etapa Atual (Em Rota)' : 'Previsto',
     },
   ];
 
@@ -429,38 +519,101 @@ export const DetailsModal: React.FC<DetailsModalProps> = ({
         <div className="p-6 max-h-[75vh] overflow-y-auto custom-scrollbar space-y-6">
           {/* 1. COMPLETE PROCESS TIMELINE (Always visible at top of modal) */}
           <div className="bg-gray-50 dark:bg-[#111827] p-4 rounded-xl border border-gray-200 dark:border-[#374151]">
-            <h3 className="text-xs font-extrabold uppercase text-gray-500 dark:text-gray-400 mb-3">
-              Rastreamento End-to-End do Processo ({p.status})
-            </h3>
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="text-xs font-extrabold uppercase text-gray-500 dark:text-gray-400">
+                  Rastreamento End-to-End do Processo
+                </h3>
+                <span
+                  className={`text-xs font-extrabold px-2.5 py-0.5 rounded border ${
+                    stage === 7
+                      ? 'bg-emerald-100 dark:bg-emerald-950/60 border-emerald-400 text-emerald-800 dark:text-emerald-300'
+                      : p.cargaParadaDrawback
+                      ? 'bg-red-100 dark:bg-red-950/60 border-red-400 text-red-800 dark:text-red-300'
+                      : stage === 3
+                      ? 'bg-blue-100 dark:bg-blue-950/60 border-blue-400 text-blue-800 dark:text-blue-300'
+                      : 'bg-amber-100 dark:bg-amber-950/60 border-amber-400 text-amber-800 dark:text-amber-300'
+                  }`}
+                >
+                  Status FUP (Col A): {rawFupStatus}
+                </span>
+              </div>
+
+              {/* Automatic Date vs. Status Inconsistency Badges */}
+              <div className="flex items-center gap-2 flex-wrap">
+                {isEtaExpired && (
+                  <span className="text-[11px] font-extrabold px-2.5 py-0.5 rounded bg-amber-100 dark:bg-amber-950/70 border border-amber-400 text-amber-800 dark:text-amber-200">
+                    ⚠️ ETA Vencido ({p.eta}) / Atualizar Status
+                  </span>
+                )}
+                {isDeliveryOverdue && (
+                  <span className="text-[11px] font-extrabold px-2.5 py-0.5 rounded bg-red-100 dark:bg-red-950/70 border border-red-400 text-red-800 dark:text-red-200">
+                    🚨 Entrega Atrasada vs. Forecast ({p.prazoEntregaMFX})
+                  </span>
+                )}
+              </div>
+            </div>
+
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5">
               {steps.map((st, i) => (
                 <div
                   key={i}
-                  className={`p-3 rounded-lg border text-left transition-all ${
-                    st.blocked
-                      ? 'bg-red-50 dark:bg-red-950/40 border-red-400 dark:border-red-700'
-                      : st.done
-                      ? 'bg-emerald-50/70 dark:bg-emerald-950/30 border-emerald-400 dark:border-emerald-700'
-                      : 'bg-white dark:bg-[#1f2937] border-gray-200 dark:border-gray-700 opacity-75'
+                  className={`p-3 rounded-lg text-left transition-all ${
+                    st.state === 'blocked'
+                      ? 'bg-red-50 dark:bg-red-950/40 border-2 border-red-500 dark:border-red-600'
+                      : st.state === 'current'
+                      ? 'bg-blue-50 dark:bg-blue-950/50 border-2 border-blue-500 dark:border-blue-400 shadow-xs ring-2 ring-blue-400/20'
+                      : st.state === 'completed'
+                      ? 'bg-emerald-50/70 dark:bg-emerald-950/30 border border-emerald-400 dark:border-emerald-700'
+                      : 'bg-white/70 dark:bg-[#1f2937]/60 border border-dashed border-gray-300 dark:border-gray-600 opacity-80'
                   }`}
                 >
                   <div className="flex items-center justify-between mb-1">
                     <span className="text-[11px] font-extrabold text-gray-800 dark:text-gray-100">
                       {st.label}
                     </span>
-                    {st.blocked ? (
-                      <i className="fas fa-lock text-red-600 text-xs"></i>
-                    ) : st.done ? (
-                      <i className="fas fa-circle-check text-emerald-600 text-xs"></i>
+                    {st.state === 'blocked' ? (
+                      <i className="fas fa-lock text-red-600 text-xs" title="Bloqueado Drawback"></i>
+                    ) : st.state === 'current' ? (
+                      <i
+                        className="fas fa-hourglass-half text-blue-600 dark:text-blue-400 text-xs animate-pulse"
+                        title="Etapa Atual"
+                      ></i>
+                    ) : st.state === 'completed' ? (
+                      <i className="fas fa-circle-check text-emerald-600 text-xs" title="Concluído"></i>
                     ) : (
-                      <i className="far fa-clock text-gray-400 text-xs"></i>
+                      <i className="far fa-clock text-gray-400 text-xs" title="Previsão / Forecast"></i>
                     )}
                   </div>
-                  <div className="text-xs font-mono font-semibold text-gray-700 dark:text-gray-300 truncate">
+                  <div
+                    className="text-xs font-mono font-semibold text-gray-700 dark:text-gray-300 truncate"
+                    title={st.sub}
+                  >
                     {st.sub}
                   </div>
                   <div className="text-[11px] font-mono text-gray-500 dark:text-gray-400 mt-1 tabular-nums">
                     {st.date}
+                  </div>
+                  <div className="mt-1.5">
+                    <span
+                      className={`inline-block text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                        st.state === 'blocked'
+                          ? 'bg-red-100 dark:bg-red-900/50 text-red-700 dark:text-red-300'
+                          : st.state === 'current'
+                          ? 'bg-blue-100 dark:bg-blue-900/60 text-blue-700 dark:text-blue-300'
+                          : st.state === 'completed'
+                          ? 'bg-emerald-100 dark:bg-emerald-900/50 text-emerald-700 dark:text-emerald-300'
+                          : 'bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400'
+                      }`}
+                    >
+                      {st.state === 'blocked'
+                        ? `🚨 ${st.badgeText}`
+                        : st.state === 'current'
+                        ? `⏳ ${st.badgeText}`
+                        : st.state === 'completed'
+                        ? `✅ ${st.badgeText}`
+                        : `🕒 ${st.badgeText}`}
+                    </span>
                   </div>
                 </div>
               ))}

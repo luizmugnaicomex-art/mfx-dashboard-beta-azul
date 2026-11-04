@@ -1,5 +1,6 @@
 import React from 'react';
 import { ImportProcess, AtoConcessorio } from '../types/mfx';
+import { getProcessStage, detectDateInconsistencies } from '../utils/excelParser';
 
 interface DashboardGridProps {
   activeTab: number;
@@ -41,130 +42,195 @@ export const DashboardGrid: React.FC<DashboardGridProps> = ({
   if (activeTab === 1) {
     return (
       <div id="dashboard-grid" className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
-        {processos.map((p) => (
-          <article
-            key={p.id}
-            onClick={() => onSelectProcess(p, 'overview')}
-            className={`card risk-${p.riskLevel} cursor-pointer`}
-          >
-            <div className="card-header flex items-start justify-between gap-2">
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="text-base font-extrabold font-mono text-gray-900 dark:text-white">
-                    {p.id}
-                  </span>
-                  <span className="text-xs text-gray-400">·</span>
-                  <span className="text-xs font-mono font-bold text-blue-600 dark:text-blue-400">
-                    {p.oc}
-                  </span>
-                </div>
-                <div className="text-xs font-bold text-gray-700 dark:text-gray-300 mt-0.5">
-                  {p.fornecedor} <span className="font-normal text-gray-500">({p.paisOrigem})</span>
-                </div>
-              </div>
-              <div className="text-right shrink-0">
-                <span className="text-xs font-extrabold text-gray-800 dark:text-gray-200 block">
-                  {p.compradorResponsavel ? `${p.compradorResponsavel} · ${p.projeto}` : p.projeto}
-                </span>
-                <span className="text-[11px] font-mono text-gray-500 dark:text-gray-400">
-                  <i className={`fas ${p.modal === 'AÉREO' ? 'fa-plane text-sky-500' : 'fa-ship text-blue-500'} mr-1`}></i>
-                  {p.modal} · {p.incoterm} · {p.agenteCarga}
-                </span>
-              </div>
-            </div>
+        {processos.map((p) => {
+          const rawFupStatus = p.statusRawExcel || p.status;
+          const stage = p.stageNumber ?? getProcessStage(rawFupStatus);
+          const { alertaEtaVencido, alertaEntregaAtrasada } = detectDateInconsistencies(
+            stage,
+            p.eta,
+            p.prazoEntregaMFX
+          );
+          const isEtaExpired = Boolean(p.alertaEtaVencido || alertaEtaVencido);
+          const isDeliveryOverdue = Boolean(p.alertaEntregaAtrasada || alertaEntregaAtrasada);
 
-            <div className="card-body space-y-3 text-xs">
-              {/* Alert if Air shipment missing AWB pre-alert */}
-              {p.alertaPreAlertaAWB && (
-                <div className="p-2.5 rounded-md bg-red-50 dark:bg-red-950/50 border border-red-300 dark:border-red-800 text-red-700 dark:text-red-300 font-bold flex items-center gap-2">
-                  <i className="fas fa-bell-slash text-sm shrink-0"></i>
-                  <span>ALERTA AÉREO: Sem Pré-Alerta AWB enviado para Ômega!</span>
-                </div>
-              )}
+          const poList =
+            p.posList && p.posList.length > 0
+              ? p.posList
+              : p.oc
+                  .split(',')
+                  .map((s) => s.trim())
+                  .filter(Boolean);
+          const displayedPOs = poList.slice(0, 2).join(', ');
+          const extraPOsCount = poList.length > 2 ? poList.length - 2 : 0;
 
-              {/* Stalled Drawback alert */}
-              {p.cargaParadaDrawback && (
-                <div className="p-2.5 rounded-md bg-red-50 dark:bg-red-950/50 border border-red-300 dark:border-red-800 text-red-800 dark:text-red-200 font-semibold">
-                  <i className="fas fa-ban mr-1.5 text-red-600"></i>
-                  <strong>CARGA PARADA ({p.diasParadoPortoAeroporto}d):</strong> {p.motivoParadaDrawback}
-                </div>
-              )}
-
-              <div className="grid grid-cols-2 gap-y-2 gap-x-4">
-                <div>
-                  <span className="text-gray-500 dark:text-gray-400 block text-[11px]">Status Atual</span>
-                  <span
-                    className={`font-extrabold ${
-                      p.cargaParadaDrawback
-                        ? 'text-red-600 dark:text-red-400'
-                        : p.status === 'Entregue MFX'
-                        ? 'text-emerald-600 dark:text-emerald-400'
-                        : 'text-gray-900 dark:text-white'
-                    }`}
-                  >
-                    {p.status}
-                  </span>
-                </div>
-                <div>
-                  <span className="text-gray-500 dark:text-gray-400 block text-[11px]">Nº BL / AWB</span>
-                  <span className="font-mono font-semibold text-gray-800 dark:text-gray-200 truncate block">
-                    {p.blAwb}
-                  </span>
-                </div>
-
-                <div>
-                  <span className="text-gray-500 dark:text-gray-400 block text-[11px]">Data Embarque (ETD)</span>
-                  <span className="font-mono font-semibold tabular-nums text-gray-800 dark:text-gray-200">
-                    {p.etd}
-                  </span>
-                </div>
-                <div>
-                  <span className="text-gray-500 dark:text-gray-400 block text-[11px]">Previsão Chegada (ETA)</span>
-                  <span className="font-mono font-bold tabular-nums text-gray-900 dark:text-white">
-                    {p.eta}
-                    {p.atrasoEtaDias > 0 && (
-                      <span className="text-orange-600 dark:text-orange-400 ml-1">
-                        (+{p.atrasoEtaDias}d)
+          return (
+            <article
+              key={p.id}
+              onClick={() => onSelectProcess(p, 'overview')}
+              className={`card risk-${p.riskLevel} cursor-pointer`}
+            >
+              <div className="card-header flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="text-base font-extrabold font-mono text-gray-900 dark:text-white shrink-0">
+                      {p.id}
+                    </span>
+                    <span className="text-xs text-gray-400">·</span>
+                    <span
+                      className="text-xs font-mono font-bold text-blue-600 dark:text-blue-400 truncate"
+                      title={`POs: ${poList.join(', ')}`}
+                    >
+                      {displayedPOs}
+                    </span>
+                    {extraPOsCount > 0 && (
+                      <span
+                        title={`Todos os POs (${poList.length}): ${poList.join(', ')}`}
+                        className="text-[10px] font-mono font-extrabold px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-950/80 text-blue-700 dark:text-blue-300 border border-blue-300 dark:border-blue-700 shrink-0"
+                      >
+                        +{extraPOsCount} POs
                       </span>
                     )}
-                  </span>
+                  </div>
+                  <div className="text-xs font-bold text-gray-700 dark:text-gray-300 mt-0.5 truncate">
+                    {p.fornecedor} <span className="font-normal text-gray-500">({p.paisOrigem})</span>
+                  </div>
                 </div>
-
-                <div>
-                  <span className="text-gray-500 dark:text-gray-400 block text-[11px]">Prazo Entrega MFX</span>
-                  <span className="font-mono font-bold tabular-nums text-blue-600 dark:text-blue-400">
-                    {p.dataEntregaMFX || p.prazoEntregaMFX}
+                <div className="text-right shrink-0">
+                  <span className="text-xs font-extrabold text-gray-800 dark:text-gray-200 block">
+                    {p.compradorResponsavel ? `${p.compradorResponsavel} · ${p.projeto}` : p.projeto}
                   </span>
-                </div>
-                <div>
-                  <span className="text-gray-500 dark:text-gray-400 block text-[11px]">Ato Concessório</span>
-                  <span className="font-mono font-semibold text-gray-700 dark:text-gray-300 truncate block">
-                    {p.atoConcessorio}
+                  <span className="text-[11px] font-mono text-gray-500 dark:text-gray-400">
+                    <i
+                      className={`fas ${
+                        p.modal === 'AÉREO' ? 'fa-plane text-sky-500' : 'fa-ship text-blue-500'
+                      } mr-1`}
+                    ></i>
+                    {p.modal} · {p.incoterm} · {p.agenteCarga}
                   </span>
                 </div>
               </div>
 
-              <div className="pt-2 border-t border-gray-100 dark:border-gray-700/60 text-[11px] text-gray-600 dark:text-gray-400 flex items-center justify-between gap-2">
-                <span className="truncate">
-                  <i className="fas fa-box-open mr-1.5 text-gray-400"></i>
-                  <strong>[{p.itens[0]?.codigoItem}]</strong> {p.itens[0]?.descricao}
+              <div className="card-body space-y-3 text-xs">
+                {/* Alert if Air shipment missing AWB pre-alert */}
+                {p.alertaPreAlertaAWB && (
+                  <div className="p-2.5 rounded-md bg-red-50 dark:bg-red-950/50 border border-red-300 dark:border-red-800 text-red-700 dark:text-red-300 font-bold flex items-center gap-2">
+                    <i className="fas fa-bell-slash text-sm shrink-0"></i>
+                    <span>ALERTA AÉREO: Sem Pré-Alerta AWB enviado para Ômega!</span>
+                  </div>
+                )}
+
+                {/* Stalled Drawback alert */}
+                {p.cargaParadaDrawback && (
+                  <div className="p-2.5 rounded-md bg-red-50 dark:bg-red-950/50 border border-red-300 dark:border-red-800 text-red-800 dark:text-red-200 font-semibold">
+                    <i className="fas fa-ban mr-1.5 text-red-600"></i>
+                    <strong>CARGA PARADA ({p.diasParadoPortoAeroporto}d):</strong> {p.motivoParadaDrawback}
+                  </div>
+                )}
+
+                {/* Date vs. Status Inconsistency Detector Badges */}
+                {(isEtaExpired || isDeliveryOverdue) && (
+                  <div className="flex flex-wrap gap-1.5">
+                    {isEtaExpired && (
+                      <span className="inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] font-extrabold bg-amber-100 dark:bg-amber-950/70 border border-amber-400 text-amber-800 dark:text-amber-200">
+                        ⚠️ ETA Vencido / Atualizar Status
+                      </span>
+                    )}
+                    {isDeliveryOverdue && (
+                      <span className="inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] font-extrabold bg-red-100 dark:bg-red-950/70 border border-red-400 text-red-800 dark:text-red-200">
+                        🚨 Entrega Atrasada vs. Forecast
+                      </span>
+                    )}
+                  </div>
+                )}
+
+                <div className="grid grid-cols-2 gap-y-2 gap-x-4">
+                  <div>
+                    <span className="text-gray-500 dark:text-gray-400 block text-[11px]">Status Atual</span>
+                    <span
+                      className={`font-extrabold ${
+                        p.cargaParadaDrawback
+                          ? 'text-red-600 dark:text-red-400'
+                          : stage === 7
+                          ? 'text-emerald-600 dark:text-emerald-400'
+                          : stage === 3
+                          ? 'text-blue-600 dark:text-blue-400'
+                          : 'text-amber-600 dark:text-amber-400'
+                      }`}
+                    >
+                      {rawFupStatus}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-gray-500 dark:text-gray-400 block text-[11px]">Nº BL / AWB</span>
+                    <span className="font-mono font-semibold text-gray-800 dark:text-gray-200 truncate block">
+                      {p.blAwb}
+                    </span>
+                  </div>
+
+                  <div>
+                    <span className="text-gray-500 dark:text-gray-400 block text-[11px]">Data Embarque (ETD)</span>
+                    <span className="font-mono font-semibold tabular-nums text-gray-800 dark:text-gray-200">
+                      {p.etd}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-gray-500 dark:text-gray-400 block text-[11px]">
+                      {stage >= 4 ? 'Chegada Brasil (ETA)' : 'Previsão Chegada (ETA)'}
+                    </span>
+                    <span className="font-mono font-bold tabular-nums text-gray-900 dark:text-white">
+                      {p.eta}
+                      {p.atrasoEtaDias > 0 && (
+                        <span className="text-orange-600 dark:text-orange-400 ml-1">
+                          (+{p.atrasoEtaDias}d)
+                        </span>
+                      )}
+                    </span>
+                  </div>
+
+                  <div>
+                    <span className="text-gray-500 dark:text-gray-400 block text-[11px]">
+                      {stage === 7 ? 'Data Entrega MFX' : 'Previsão Entrega MFX (Est.)'}
+                    </span>
+                    <span
+                      className={`font-mono font-bold tabular-nums ${
+                        stage === 7
+                          ? 'text-emerald-600 dark:text-emerald-400'
+                          : 'text-blue-600 dark:text-blue-400'
+                      }`}
+                    >
+                      {stage === 7 ? p.dataEntregaMFX || p.prazoEntregaMFX : p.prazoEntregaMFX}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-gray-500 dark:text-gray-400 block text-[11px]">Ato Concessório</span>
+                    <span className="font-mono font-semibold text-gray-700 dark:text-gray-300 truncate block">
+                      {p.atoConcessorio}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="pt-2 border-t border-gray-100 dark:border-gray-700/60 text-[11px] text-gray-600 dark:text-gray-400 flex items-center justify-between gap-2">
+                  <span className="truncate">
+                    <i className="fas fa-box-open mr-1.5 text-gray-400"></i>
+                    <strong>[{p.itens[0]?.codigoItem}]</strong> {p.itens[0]?.descricao}
+                  </span>
+                  <span className="font-mono font-bold text-blue-600 dark:text-blue-400 shrink-0">
+                    {p.itens.length} item(ns)
+                  </span>
+                </div>
+              </div>
+
+              <div className="card-footer flex items-center justify-between text-xs">
+                <span className="font-mono font-bold text-gray-800 dark:text-gray-200 tabular-nums">
+                  VMLD: {fmtBRL(p.vmldBRL)}
                 </span>
-                <span className="font-mono font-bold text-blue-600 dark:text-blue-400 shrink-0">
-                  {p.itens.length} item(ns)
+                <span className="text-blue-600 dark:text-blue-400 font-semibold flex items-center gap-1">
+                  Ver Itens & Timeline <i className="fas fa-chevron-right text-[10px]"></i>
                 </span>
               </div>
-            </div>
-
-            <div className="card-footer flex items-center justify-between text-xs">
-              <span className="font-mono font-bold text-gray-800 dark:text-gray-200 tabular-nums">
-                VMLD: {fmtBRL(p.vmldBRL)}
-              </span>
-              <span className="text-blue-600 dark:text-blue-400 font-semibold flex items-center gap-1">
-                Ver Itens & Timeline <i className="fas fa-chevron-right text-[10px]"></i>
-              </span>
-            </div>
-          </article>
-        ))}
+            </article>
+          );
+        })}
       </div>
     );
   }

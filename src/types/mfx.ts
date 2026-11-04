@@ -195,11 +195,14 @@ export interface ImportProcess {
   freeTimeTotalDias: number;
   freeTimeDiasRestantes: number;
 
-  // Operational Alerts
+  // Operational Alerts & Date vs. Status Inconsistency Flags
+  stageNumber?: 1 | 2 | 3 | 4 | 5 | 6 | 7;
   cargaParadaDrawback: boolean;
   motivoParadaDrawback?: string;
   diasParadoPortoAeroporto?: number;
   alertaPreAlertaAWB: boolean;
+  alertaEtaVencido?: boolean;
+  alertaEntregaAtrasada?: boolean;
   atrasoEtaDias: number;
 
   // Financial & Cashflow

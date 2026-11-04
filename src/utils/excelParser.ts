@@ -433,60 +433,147 @@ function extractRowsFromSheet(sheet: XLSX.WorkSheet): {
 // D. STATUS, REGIME & RISK NORMALIZATION
 // ============================================================================
 
-export function normalizeStatus(
-  rawStatus: string,
-  entregaMFX: string,
-  desembaraco: string,
-  chegada: string,
-  embarque: string
-): string {
+export function getProcessStage(rawStatus: string): 1 | 2 | 3 | 4 | 5 | 6 | 7 {
   const s = stripAccents(String(rawStatus || '').toUpperCase().trim());
+  if (!s) return 3;
+
+  // Stage 6: Cleared / In National Road Transit (check AG. ENTREGA before ENTREGUE)
   if (
-    s.includes('PARADO') ||
-    s.includes('AGUARDANDO DRAWBACK') ||
-    s.includes('AG. DRAWBACK') ||
-    s.includes('BLOQUEADO')
+    s.includes('AG. ENTREGA') ||
+    s.includes('AGUARDANDO ENTREGA') ||
+    s.includes('TRANSITO RODOVIARIO') ||
+    s.includes('EM TRANSITO RODOVIARIO') ||
+    s.includes('DESEMBARACADO') ||
+    s.includes('LIBERADO') ||
+    s.includes('CARREGADO')
   ) {
-    return 'Parado Ag. Drawback';
+    return 6;
   }
+
+  // Stage 7: Delivered to MFX (ONLY when Column A explicitly states ENTREGUE / CONCLUIDO / FINALIZADO)
+  if (s.includes('ENTREGUE') || s.includes('CONCLUID') || s.includes('FINALIZAD')) {
+    return 7;
+  }
+
+  // Stage 3: Shipped / In International Transit / Waiting Arrival at Port/Airport
+  // MUST check AG. CHEGADA / AGUARDANDO CHEGADA before PORTO/AEROPORTO because "AG. CHEGADA PORTO/AEROPORTO" contains PORTO/AEROPORTO
   if (
-    s.includes('ENTREGUE') ||
-    s.includes('CONCLUIDO') ||
-    s.includes('FINALIZADO') ||
-    Boolean(entregaMFX)
+    s.includes('AG. CHEGADA') ||
+    s.includes('AGUARDANDO CHEGADA') ||
+    s.includes('EM TRANSITO') ||
+    s.includes('TRANSITO') ||
+    s.includes('EMBARCAD')
   ) {
-    return 'Entregue MFX';
+    return 3;
   }
-  if (s.includes('DESEMBARACADO') || s.includes('LIBERADO') || Boolean(desembaraco)) {
-    return 'Desembaraçado';
-  }
+
+  // Stage 5: DI Registered / In Customs Clearance / Parameterized
   if (
+    s.includes('DI REGISTRADA') ||
+    s.includes('EM DESEMBARACO') ||
+    s.includes('PARAMETRIZAD') ||
+    s.includes('CANAL')
+  ) {
+    return 5;
+  }
+
+  // Stage 4: Arrived at Port/Airport / Waiting DI Registration / Blocked on Drawback AC
+  if (
+    s.includes('DRAWBACK') ||
+    s.includes('ATO CONCESSORIO') ||
+    s.includes('AG. AC') ||
+    s.includes('PARAD') ||
+    s.includes('BLOQUEAD') ||
+    s.includes('NO PORTO') ||
+    s.includes('NO AEROPORTO') ||
+    s.includes('PRESENCA') ||
+    s.includes('AG. REGISTRO') ||
+    s.includes('AGUARDANDO REGISTRO') ||
     s.includes('PORTO') ||
     s.includes('AEROPORTO') ||
-    s.includes('AGUARDANDO REGISTRO') ||
-    s.includes('EM DESEMBARACO') ||
-    s.includes('REGISTRADO') ||
-    s.includes('PARAMETRIZADO') ||
-    Boolean(chegada)
+    s.includes('TECON') ||
+    s.includes('TECA')
   ) {
+    return 4;
+  }
+
+  // Stage 2: Cargo Ready / Waiting Shipment or AWB
+  if (
+    s.includes('CARGA PRONTA') ||
+    s.includes('AG. EMBARQUE') ||
+    s.includes('AGUARDANDO EMBARQUE') ||
+    s.includes('AG. AWB') ||
+    s.includes('AGUARDANDO AWB') ||
+    s.includes('AG. COLETA') ||
+    s.includes('AGUARDANDO COLETA') ||
+    s.includes('COLETAD') ||
+    s.includes('PRONTA')
+  ) {
+    return 2;
+  }
+
+  // Stage 1: In Production / PO Issued / Waiting Cargo Readiness
+  if (
+    s.includes('PRODUCAO') ||
+    s.includes('FABRICACAO') ||
+    s.includes('PEDIDO') ||
+    s.includes('PRONTIDAO')
+  ) {
+    return 1;
+  }
+
+  return 3;
+}
+
+export function normalizeStatus(
+  rawStatus: string,
+  _entregaMFX?: string,
+  _desembaraco?: string,
+  _chegada?: string,
+  _embarque?: string
+): string {
+  const s = stripAccents(String(rawStatus || '').toUpperCase().trim());
+  const stage = getProcessStage(rawStatus);
+
+  // Column A (STATUS) is the absolute source of truth. Never promote status based on forecast dates!
+  if (stage === 7) return 'Entregue MFX';
+  if (stage === 6) return 'Desembaraçado';
+  if (stage === 5) return 'No Porto/Aeroporto';
+  if (stage === 4) {
+    if (
+      s.includes('PARAD') ||
+      s.includes('DRAWBACK') ||
+      s.includes('ATO CONCESSORIO') ||
+      s.includes('AG. AC') ||
+      s.includes('BLOQUEAD')
+    ) {
+      return 'Parado Ag. Drawback';
+    }
     return 'No Porto/Aeroporto';
   }
-  if (s.includes('TRANSITO') || s.includes('EMBARCADO') || Boolean(embarque)) {
-    return 'Em Trânsito';
-  }
-  if (s.includes('PRODUCAO') || s.includes('FABRICACAO')) {
-    return 'Em Produção Fornecedor';
-  }
-  if (
-    s.includes('EMBARQUE') ||
-    s.includes('PRONTA') ||
-    s.includes('COLETADO') ||
-    s.includes('AG.') ||
-    s.includes('AGUARDANDO')
-  ) {
-    return 'Ag. Embarque';
-  }
+  if (stage === 3) return 'Em Trânsito';
+  if (stage === 2) return 'Ag. Embarque';
+  if (stage === 1) return 'Em Produção Fornecedor';
+
   return rawStatus ? String(rawStatus).trim() : 'Em Trânsito';
+}
+
+export function detectDateInconsistencies(
+  stage: number,
+  eta?: string,
+  prazoEntrega?: string
+): {
+  alertaEtaVencido: boolean;
+  alertaEntregaAtrasada: boolean;
+} {
+  const today = new Date().toISOString().slice(0, 10);
+  const isIsoDate = (d?: string) => Boolean(d && /^\d{4}-\d{2}-\d{2}$/.test(d));
+
+  const alertaEtaVencido = stage <= 3 && isIsoDate(eta) && String(eta) < today;
+  const alertaEntregaAtrasada =
+    stage < 7 && isIsoDate(prazoEntrega) && String(prazoEntrega) < today;
+
+  return { alertaEtaVencido, alertaEntregaAtrasada };
 }
 
 export function normalizeRegime(rawBeneficio: string): string {
@@ -513,7 +600,10 @@ export function computeProcessRisk(p: Partial<ImportProcess>): {
   riskLevel: RiskLevel;
   riskReason: string;
 } {
-  if (p.status === 'Entregue MFX' || Boolean(p.dataEntregaMFX)) {
+  const stage = p.stageNumber ?? getProcessStage(p.statusRawExcel || p.status || '');
+
+  // Completed / Delivered ONLY when Column A status explicitly resolves to Stage 7 (Entregue MFX)
+  if (stage === 7 || p.status === 'Entregue MFX') {
     if ((p.impostosPagosIndevidamenteBRL || 0) > 0) {
       return {
         riskLevel: 'medium',
@@ -533,7 +623,15 @@ export function computeProcessRisk(p: Partial<ImportProcess>): {
       riskReason: p.motivoParadaDrawback || 'Carga Parada aguardando Ato Concessório Drawback',
     };
   }
-  if ((p.freeTimeDiasRestantes ?? 10) < 3 && p.status === 'No Porto/Aeroporto') {
+  if (p.alertaEntregaAtrasada) {
+    return {
+      riskLevel: 'high',
+      riskReason: `🚨 Entrega Atrasada vs. Forecast (${p.prazoEntregaMFX}) · Status FUP: ${
+        p.statusRawExcel || p.status
+      }`,
+    };
+  }
+  if ((p.freeTimeDiasRestantes ?? 10) < 3 && stage >= 4 && stage < 7) {
     return {
       riskLevel: 'high',
       riskReason: `Free Time expirando (${p.freeTimeDiasRestantes}d restantes) em ${p.portoAeroportoDestino}`,
@@ -553,6 +651,12 @@ export function computeProcessRisk(p: Partial<ImportProcess>): {
       )} sob Recolhimento Integral`,
     };
   }
+  if (p.alertaEtaVencido) {
+    return {
+      riskLevel: 'medium',
+      riskReason: `⚠️ ETA Vencido (${p.eta}) / Atualizar Status (${p.statusRawExcel || p.status})`,
+    };
+  }
   if (p.canal === 'Vermelho' || p.canal === 'Amarelo' || (p.atrasoEtaDias || 0) > 2) {
     return {
       riskLevel: 'medium',
@@ -564,7 +668,7 @@ export function computeProcessRisk(p: Partial<ImportProcess>): {
   }
   return {
     riskLevel: 'low',
-    riskReason: `Operação no prazo · ${p.fornecedor} (${p.paisOrigem}) · BL/AWB ${p.blAwb}`,
+    riskReason: `${p.statusRawExcel || p.status} · ${p.fornecedor} (${p.paisOrigem}) · BL/AWB ${p.blAwb}`,
   };
 }
 
@@ -828,7 +932,7 @@ export function parseMfxExcelFile(
 
       const rawItem: MfxRawItemRow = {
         id: `RAW-${idx + 1}`,
-        status: rawStatus || (eta && eta < '2026-03-01' ? 'ENTREGUE' : 'EM TRÂNSITO'),
+        status: rawStatus || 'EM TRÂNSITO',
         refMfx,
         compradorResponsavel: comprador,
         po: po || 'S/ PO',
@@ -920,35 +1024,44 @@ export function parseMfxExcelFile(
       );
       const totalQtdUnidades = group.items.reduce((sum, item) => sum + item.qtd, 0);
 
-      // Check optional Col U+ columns if present in the sheet
-      const dataChegadaEfetiva = getCellDate(firstRow, ['CHEGADA', 'DATA CHEGADA'], '');
-      const dataRegistroDI = getCellDate(
+      // Check optional Col U+ columns if present in the sheet (note: in FUP sheets, future stage dates are FORECASTS unless status confirms completion)
+      const rawChegadaCell = getCellDate(firstRow, ['CHEGADA', 'DATA CHEGADA'], '');
+      const rawRegistroDICell = getCellDate(
         firstRow,
         ['DATA DO REGISTRO', 'DATA REGISTRO'],
         ''
       );
-      const dataDesembaraco = getCellDate(
+      const rawDesembaracoCell = getCellDate(
         firstRow,
         ['DESEMBARAÇO', 'DESEMBARACO', 'DATA DESEMBARACO'],
         ''
       );
-      const dataEntregaMFX = getCellDate(
+      const rawEntregaMFXCell = getCellDate(
         firstRow,
         ['ENTREGA MFX', 'DATA ENTREGA MFX', 'DATA ENTREGA'],
         ''
       );
 
       const statusRawExcel = firstItem.status;
-      const status = normalizeStatus(
-        statusRawExcel,
-        dataEntregaMFX,
-        dataDesembaraco,
-        dataChegadaEfetiva,
-        firstItem.etd
-      );
+      const stageNumber = getProcessStage(statusRawExcel);
+      const status = normalizeStatus(statusRawExcel);
 
+      // Forecast dates vs. Actual completed dates based strictly on Column A stageNumber
+      const dataChegadaEfetiva =
+        stageNumber >= 4 ? rawChegadaCell || firstItem.eta || undefined : undefined;
+      const dataRegistroDI =
+        stageNumber >= 5 ? rawRegistroDICell || firstItem.eta || undefined : undefined;
+      const dataDesembaraco =
+        stageNumber >= 6 ? rawDesembaracoCell || firstItem.eta || undefined : undefined;
       const effectiveDeliveryDate =
-        dataEntregaMFX || (status === 'Entregue MFX' ? firstItem.eta : '');
+        stageNumber === 7 ? rawEntregaMFXCell || firstItem.eta || '' : '';
+      const forecastDeliveryDate =
+        rawEntregaMFXCell || firstItem.eta || 'A Confirmar';
+      const { alertaEtaVencido, alertaEntregaAtrasada } = detectDateInconsistencies(
+        stageNumber,
+        firstItem.eta,
+        forecastDeliveryDate
+      );
 
       const beneficioRaw = String(
         getCell(firstRow, ['BENEFÍCIO', 'BENEFICIO', 'REGIME', 'DRAWBACK'], 'DRAWBACK')
@@ -1011,15 +1124,23 @@ export function parseMfxExcelFile(
           ? totalImpostosEstimadosBRL
           : 0;
 
+      const rawDiFromSheet = String(getCell(firstRow, ['DI', 'DUIMP'], '')).trim();
       const numeroDiDuimp =
-        String(getCell(firstRow, ['DI', 'DUIMP'], '')).trim() ||
-        (status === 'Entregue MFX' ? `26/04819${gIdx + 1}-0` : 'Pendente Registro');
+        rawDiFromSheet ||
+        (stageNumber === 7
+          ? `26/04819${gIdx + 1}-0`
+          : stageNumber <= 3
+          ? 'Aguardando Chegada'
+          : 'Pendente Registro');
       const canalRaw = String(getCell(firstRow, ['CANAL'], '')).trim();
-      const canal = canalRaw
-        ? normalizeCanal(canalRaw)
-        : status === 'Entregue MFX'
-        ? 'Verde'
-        : 'Pendente Registro';
+      const canal =
+        canalRaw && stageNumber >= 5
+          ? normalizeCanal(canalRaw)
+          : stageNumber >= 6
+          ? normalizeCanal(canalRaw) !== 'Pendente Registro'
+            ? normalizeCanal(canalRaw)
+            : 'Verde'
+          : 'Pendente Registro';
 
       const localDesembaraco =
         String(
@@ -1094,6 +1215,7 @@ export function parseMfxExcelFile(
         projeto,
         status,
         statusRawExcel,
+        stageNumber,
         modal: firstItem.modal,
         incoterm: firstItem.incoterm,
         regime,
@@ -1112,33 +1234,32 @@ export function parseMfxExcelFile(
         etd: firstItem.etd || 'Aguardando',
         etaOriginalPO: firstItem.eta || 'Aguardando',
         eta: firstItem.eta || 'Aguardando',
-        dataChegadaEfetiva:
-          dataChegadaEfetiva || (status === 'Entregue MFX' ? firstItem.eta : undefined),
-        dataRegistroDI:
-          dataRegistroDI || (status === 'Entregue MFX' ? firstItem.eta : undefined),
-        dataDesembaraco:
-          dataDesembaraco || (status === 'Entregue MFX' ? firstItem.eta : undefined),
+        dataChegadaEfetiva,
+        dataRegistroDI,
+        dataDesembaraco,
         dataEntregaMFX: effectiveDeliveryDate || undefined,
-        prazoEntregaMFX: effectiveDeliveryDate || firstItem.eta || 'A Confirmar',
+        prazoEntregaMFX: effectiveDeliveryDate || forecastDeliveryDate,
         transitTimeDias: firstItem.transitTimeDias,
         tempoDesembaracoDias,
         tempoEntregaRodoviariaDias,
         leadTimeTotalDias:
           firstItem.transitTimeDias + tempoDesembaracoDias + tempoEntregaRodoviariaDias,
         freeTimeTotalDias: firstItem.modal === 'AÉREO' ? 5 : 14,
-        freeTimeDiasRestantes: status === 'Entregue MFX' ? 10 : cargaParadaDrawback ? 2 : 9,
+        freeTimeDiasRestantes: stageNumber === 7 ? 10 : cargaParadaDrawback ? 2 : 9,
         cargaParadaDrawback,
         motivoParadaDrawback: cargaParadaDrawback
           ? `Aguardando vinculação de Ato Concessório (${defaultAC})`
           : undefined,
         diasParadoPortoAeroporto: cargaParadaDrawback ? 6 : 0,
         alertaPreAlertaAWB,
+        alertaEtaVencido,
+        alertaEntregaAtrasada,
         atrasoEtaDias: 0,
         moeda,
         taxaPtaxDI,
         condicaoPagamento: '90 DDL',
         dataVencimentoInvoice: firstItem.eta || '2026-06-30',
-        statusPagamentoInvoice: status === 'Entregue MFX' ? 'Pago' : 'A Vencer',
+        statusPagamentoInvoice: stageNumber === 7 ? 'Pago' : 'A Vencer',
         valorFOBMoeda: totalValorMoeda,
         valorVMLDMoeda: Number((totalValorMoeda + freteInternacionalMoeda).toFixed(2)),
         freteInternacionalMoeda,
@@ -1452,13 +1573,20 @@ export function parseMfxExcelFile(
         transitTimeDias + tempoDesembaracoDias + tempoEntregaRodoviariaDias;
     }
 
-    const statusRawExcel = String(getCell(row, ['STATUS', 'SITUACAO'], '')).trim();
-    const status = normalizeStatus(
-      statusRawExcel,
-      dataEntregaMFX,
-      dataDesembaraco,
-      dataChegadaEfetiva,
-      etd
+    const statusRawExcel = String(getCell(row, ['STATUS', 'SITUACAO'], 'EM TRÂNSITO')).trim();
+    const stageNumber = getProcessStage(statusRawExcel);
+    const status = normalizeStatus(statusRawExcel);
+
+    // Forecast dates vs. Actual completed dates based strictly on Column A stageNumber
+    const forecastEntregaMFX = dataEntregaMFX || eta || 'A Confirmar';
+    const actualChegadaEfetiva = stageNumber >= 4 ? dataChegadaEfetiva || eta || undefined : undefined;
+    const actualRegistroDI = stageNumber >= 5 ? dataRegistroDI || undefined : undefined;
+    const actualDesembaraco = stageNumber >= 6 ? dataDesembaraco || undefined : undefined;
+    const actualEntregaMFX = stageNumber === 7 ? dataEntregaMFX || eta || undefined : undefined;
+    const { alertaEtaVencido, alertaEntregaAtrasada } = detectDateInconsistencies(
+      stageNumber,
+      eta,
+      forecastEntregaMFX
     );
 
     const dataVencimentoInvoice = getCellDate(
@@ -1530,20 +1658,24 @@ export function parseMfxExcelFile(
 
     const cargaParadaDrawback =
       status === 'Parado Ag. Drawback' ||
-      stripAccents(statusRawExcel.toUpperCase()).includes('DRAWBACK') ||
-      (Boolean(dataChegadaEfetiva) &&
-        !dataRegistroDI &&
-        !dataEntregaMFX &&
-        regime === 'Drawback Suspensão');
+      stripAccents(statusRawExcel.toUpperCase()).includes('DRAWBACK');
 
     const alertaPreAlertaAWB =
       modal === 'AÉREO' &&
-      !dataEntregaMFX &&
-      (!numeroDiDuimp || numeroDiDuimp === 'Pendente Registro');
+      stageNumber < 7 &&
+      (!numeroDiDuimp || numeroDiDuimp === 'Pendente Registro' || numeroDiDuimp === 'Aguardando Chegada');
 
     const blAwbCell = String(
       getCell(row, ['BL / AWB', 'BL/AWB', 'CONHECIMENTO'], '')
     ).trim();
+
+    const effectiveNumeroDi =
+      numeroDiDuimp !== 'Pendente Registro'
+        ? numeroDiDuimp
+        : stageNumber <= 3
+        ? 'Aguardando Chegada'
+        : 'Pendente Registro';
+    const effectiveCanal = stageNumber >= 5 ? canal : 'Pendente Registro';
 
     const partialProc: ImportProcess = {
       id,
@@ -1561,8 +1693,9 @@ export function parseMfxExcelFile(
           ? 'ITALIA'
           : 'EUA'),
       projeto,
-      status: cargaParadaDrawback && status !== 'Entregue MFX' ? 'Parado Ag. Drawback' : status,
+      status: cargaParadaDrawback && stageNumber !== 7 ? 'Parado Ag. Drawback' : status,
       statusRawExcel: statusRawExcel || status,
+      stageNumber,
       modal,
       incoterm,
       regime,
@@ -1573,9 +1706,11 @@ export function parseMfxExcelFile(
       armadorCiaAerea: modal === 'AÉREO' ? 'Cia Aérea Internacional' : 'Armador Marítimo',
       blAwb:
         blAwbCell ||
-        (numeroDiDuimp !== 'Pendente Registro' ? `DI ${numeroDiDuimp}` : `REF-${id}`),
-      numeroDiDuimp,
-      canal,
+        (effectiveNumeroDi !== 'Pendente Registro' && effectiveNumeroDi !== 'Aguardando Chegada'
+          ? `DI ${effectiveNumeroDi}`
+          : `REF-${id}`),
+      numeroDiDuimp: effectiveNumeroDi,
+      canal: effectiveCanal,
       liAnuente: anuencia,
       deferimentoLI: deferimentoLI || undefined,
       portoAeroportoDestino: localDesembaraco,
@@ -1584,32 +1719,34 @@ export function parseMfxExcelFile(
       etd: etd || 'Aguardando',
       etaOriginalPO: eta || 'Aguardando',
       eta: eta || dataChegadaEfetiva || 'Aguardando',
-      dataChegadaEfetiva: dataChegadaEfetiva || undefined,
-      dataRegistroDI: dataRegistroDI || undefined,
-      dataDesembaraco: dataDesembaraco || undefined,
-      dataCarregamento: dataCarregamento || undefined,
-      prazoEntregaMFX: dataEntregaMFX || eta || 'A Confirmar',
-      dataEntregaMFX: dataEntregaMFX || undefined,
+      dataChegadaEfetiva: actualChegadaEfetiva,
+      dataRegistroDI: actualRegistroDI,
+      dataDesembaraco: actualDesembaraco,
+      dataCarregamento: stageNumber >= 6 ? dataCarregamento || undefined : undefined,
+      prazoEntregaMFX: actualEntregaMFX || forecastEntregaMFX,
+      dataEntregaMFX: actualEntregaMFX,
       transitTimeDias,
       tempoDesembaracoDias,
       tempoEntregaRodoviariaDias,
       leadTimeTotalDias,
       freeTimeTotalDias: modal === 'AÉREO' ? 5 : 14,
-      freeTimeDiasRestantes: dataEntregaMFX ? 10 : cargaParadaDrawback ? 2 : 7,
-      cargaParadaDrawback: cargaParadaDrawback && !dataEntregaMFX,
+      freeTimeDiasRestantes: stageNumber === 7 ? 10 : cargaParadaDrawback ? 2 : 7,
+      cargaParadaDrawback: cargaParadaDrawback && stageNumber !== 7,
       motivoParadaDrawback:
-        cargaParadaDrawback && !dataEntregaMFX
+        cargaParadaDrawback && stageNumber !== 7
           ? `Aguardando liberação / vinculação de Ato Concessório (${defaultAC}) em ${localDesembaraco}`
           : undefined,
       diasParadoPortoAeroporto:
-        cargaParadaDrawback && !dataEntregaMFX ? Math.max(4, tempoDesembaracoDias) : 0,
+        cargaParadaDrawback && stageNumber !== 7 ? Math.max(4, tempoDesembaracoDias) : 0,
       alertaPreAlertaAWB,
-      atrasoEtaDias: diffDaysBetween(dataChegadaEfetiva, eta, 0),
+      alertaEtaVencido,
+      alertaEntregaAtrasada,
+      atrasoEtaDias: actualChegadaEfetiva ? diffDaysBetween(actualChegadaEfetiva, eta, 0) : 0,
       moeda,
       taxaPtaxDI,
       condicaoPagamento,
       dataVencimentoInvoice,
-      statusPagamentoInvoice: dataEntregaMFX ? 'Pago' : 'A Vencer',
+      statusPagamentoInvoice: stageNumber === 7 ? 'Pago' : 'A Vencer',
       valorFOBMoeda,
       valorVMLDMoeda,
       freteInternacionalMoeda,

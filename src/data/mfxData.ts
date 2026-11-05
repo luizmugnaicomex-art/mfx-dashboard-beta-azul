@@ -2678,7 +2678,7 @@ export const RAW_ITENS_MFX: MfxRawItemRow[] = PROCESSOS_MFX.flatMap((p) =>
 
 export const TRANSLATIONS: Record<LanguageCode, Record<string, string>> = {
   pt: {
-    mainTitle: 'MFX — COMEX & DRAWBACK DASHBOARD',
+    mainTitle: 'MFX - COMEX MONITOR',
     lastUpdatePrefix: 'Fonte:',
     totalProcesses: 'Total Processos (Visão Atual)',
     totalCifFob: 'Valor Total CIF/VMLD (R$)',
@@ -2710,7 +2710,7 @@ export const TRANSLATIONS: Record<LanguageCode, Record<string, string>> = {
     tabDeliveries: '🚚 Deliveries (Entregas)',
   },
   en: {
-    mainTitle: 'MFX — COMEX & DRAWBACK DASHBOARD',
+    mainTitle: 'MFX - COMEX MONITOR',
     lastUpdatePrefix: 'Source:',
     totalProcesses: 'Active Processes (Current View)',
     totalCifFob: 'Total CIF/VMLD Value (R$)',

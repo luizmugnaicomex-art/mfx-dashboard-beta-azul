@@ -186,6 +186,11 @@ export interface ImportProcess {
   dataCarregamento?: string; // CARREGAMENTO
   prazoEntregaMFX: string;
   dataEntregaMFX?: string; // ENTREGA MFX
+  etdFormatted?: string;
+  etaFormatted?: string;
+  clearanceDateFormatted?: string;
+  deliveryDateFormatted?: string;
+  hasExplicitRefMfx?: boolean;
 
   // Lead Time Metrics (Days)
   transitTimeDias: number; // TT / TR (ETA - ETD)

@@ -710,6 +710,48 @@ export function parseMfxExcelFile(
     }
   }
 
+  // Cross-reference PROJETO across all extracted rows by PO/OC and REF. MFX/PROCESSO
+  const PROJETO_HEADERS = [
+    'PROJETO',
+    'PROJETOS',
+    'APLICAÇÃO',
+    'APLICACAO',
+    'CLIENTE',
+    'CENTRO DE CUSTO',
+    'DESTINO',
+  ];
+  const projetoLookup = new Map<string, string>();
+  [...allFlatRows, ...allLegacyPedidoRows, ...allLegacyProcessRows].forEach((r) => {
+    const proj = String(getCell(r, PROJETO_HEADERS, '')).trim().toUpperCase();
+    if (!proj) return;
+    const ref = String(getCell(r, ['REF. MFX', 'REF MFX', 'PROCESSO', 'REF'], '')).trim().toUpperCase();
+    const po = String(getCell(r, ['PO', 'OC', 'PEDIDO', 'ORDEM DE COMPRA'], '')).trim().toUpperCase();
+    if (ref) projetoLookup.set(ref, proj);
+    if (po) {
+      po.split(',').forEach((token) => {
+        const t = token.trim();
+        if (t) projetoLookup.set(t, proj);
+      });
+    }
+  });
+
+  // If the workbook has both a flat table and a separate PEDIDOS tab, append unshipped PEDIDOS rows not yet in allFlatRows
+  if (allFlatRows.length > 0 && allLegacyPedidoRows.length > 0) {
+    const existingRefsAndPos = new Set<string>();
+    allFlatRows.forEach((r) => {
+      const ref = String(getCell(r, ['REF. MFX', 'REF MFX', 'PROCESSO', 'REF'], '')).trim().toUpperCase();
+      const po = String(getCell(r, ['PO', 'OC', 'PEDIDO', 'ORDEM DE COMPRA'], '')).trim().toUpperCase();
+      if (ref) existingRefsAndPos.add(ref);
+      if (po) existingRefsAndPos.add(po);
+    });
+    allLegacyPedidoRows.forEach((r) => {
+      const ref = String(getCell(r, ['REF. MFX', 'REF MFX', 'PROCESSO', 'REF'], '')).trim().toUpperCase();
+      const po = String(getCell(r, ['PO', 'OC', 'PEDIDO', 'ORDEM DE COMPRA'], '')).trim().toUpperCase();
+      if ((ref && existingRefsAndPos.has(ref)) || (po && existingRefsAndPos.has(po))) return;
+      allFlatRows.push(r);
+    });
+  }
+
   // ==========================================================================
   // CASE 1: REAL MFX MASTER FLAT TABLE (Col A STATUS, Col B REF. MFX, Col C COMPRADOR, Col D PO...)
   // ==========================================================================
@@ -720,6 +762,7 @@ export function parseMfxExcelFile(
       string,
       {
         refMfx: string;
+        hasExplicitRefMfx: boolean;
         rows: ExtractedRow[];
         items: MfxRawItemRow[];
       }
@@ -735,6 +778,7 @@ export function parseMfxExcelFile(
       let refMfx = String(
         getCell(row, ['REF. MFX', 'REF MFX', 'PROCESSO', 'REF'], '', 1)
       ).trim();
+      const hasExplicitRefMfx = Boolean(refMfx && !refMfx.startsWith('#'));
 
       // Col C — COMPRADOR RESPONSAVEL
       const comprador = String(
@@ -919,20 +963,28 @@ export function parseMfxExcelFile(
         transitTimeDias = diffDaysBetween(eta, etd, modal === 'AÉREO' ? 3 : 20);
       }
 
-      const projeto = String(
-        getCell(row, ['PROJETO'], comprador ? `COMP: ${comprador}` : 'PETROBRAS')
-      )
-        .trim()
-        .toUpperCase();
+      const explicitRowProj = String(getCell(row, PROJETO_HEADERS, '')).trim().toUpperCase();
+      const crossRefProj =
+        (refMfx && projetoLookup.get(refMfx.toUpperCase())) ||
+        (po && projetoLookup.get(po.toUpperCase())) ||
+        '';
+      const projeto =
+        explicitRowProj ||
+        crossRefProj ||
+        (fornecedor.includes('TRATOS') || fornecedor.includes('WALTHER')
+          ? 'PETROBRAS'
+          : fornecedor.includes('ACOTEQ')
+          ? 'PRIO'
+          : 'PETROBRAS');
 
       // Fallback key if REF. MFX is blank on a row
       if (!refMfx) {
-        refMfx = blAwb ? `BL-${blAwb}` : po ? `PO-${po}` : `MFX-ITEM-${idx + 1}`;
+        refMfx = blAwb ? `BL-${blAwb}` : po ? `PO-${po}` : `SEM-REF-${idx + 1}`;
       }
 
       const rawItem: MfxRawItemRow = {
         id: `RAW-${idx + 1}`,
-        status: rawStatus || 'EM TRÂNSITO',
+        status: rawStatus || (blAwb ? 'EM TRÂNSITO' : 'EM PRODUÇÃO FORNECEDOR'),
         refMfx,
         compradorResponsavel: comprador,
         po: po || 'S/ PO',
@@ -947,10 +999,10 @@ export function parseMfxExcelFile(
         moeda,
         unidadeMedida,
         agenteCargas: agenteCargas || 'A DEFINIR',
-        blAwb: blAwb || 'A DEFINIR',
+        blAwb: blAwb || '',
         incoterm: incoterm || 'FCA',
         modal,
-        dataProntidaoCarga: dataProntidaoCarga || etd || '',
+        dataProntidaoCarga: dataProntidaoCarga || '',
         etd: etd || '',
         eta: eta || '',
         transitTimeDias,
@@ -962,7 +1014,7 @@ export function parseMfxExcelFile(
       pedidosForecast.push({
         id: `PO-LINE-${idx + 1}`,
         projeto,
-        processo: refMfx,
+        processo: hasExplicitRefMfx ? refMfx : 'Sem Referência / Ag. Abertura',
         compradorResponsavel: comprador,
         fornecedor,
         origem,
@@ -971,22 +1023,22 @@ export function parseMfxExcelFile(
         descricao,
         qtd,
         unidadeMedida,
-        emissaoOC: dataProntidaoCarga || etd || '2026-01-15',
+        emissaoOC: getCellDate(row, ['EMISSÃO OC', 'EMISSAO OC', 'DATA PO', 'DATA OC'], '') || dataProntidaoCarga || '',
         incoterm: incoterm || 'FCA',
         valorUnitario,
         valor: valorTotal,
         moeda,
-        prontidaoCarga: dataProntidaoCarga || etd || 'A Confirmar',
-        etd,
-        eta,
+        prontidaoCarga: dataProntidaoCarga || '',
+        etd: etd || '',
+        eta: eta || '',
         agenteCargas,
-        blAwb,
+        blAwb: blAwb || '',
         modal,
         status: rawItem.status,
       });
 
       if (!groupedByRefMfx.has(refMfx)) {
-        groupedByRefMfx.set(refMfx, { refMfx, rows: [], items: [] });
+        groupedByRefMfx.set(refMfx, { refMfx, hasExplicitRefMfx, rows: [], items: [] });
       }
       const group = groupedByRefMfx.get(refMfx)!;
       group.rows.push(row);
@@ -1024,7 +1076,7 @@ export function parseMfxExcelFile(
       );
       const totalQtdUnidades = group.items.reduce((sum, item) => sum + item.qtd, 0);
 
-      // Check optional Col U+ columns if present in the sheet (note: in FUP sheets, future stage dates are FORECASTS unless status confirms completion)
+      // Check optional Col U+ columns if present in the sheet
       const rawChegadaCell = getCellDate(firstRow, ['CHEGADA', 'DATA CHEGADA'], '');
       const rawRegistroDICell = getCellDate(
         firstRow,
@@ -1038,7 +1090,7 @@ export function parseMfxExcelFile(
       );
       const rawEntregaMFXCell = getCellDate(
         firstRow,
-        ['ENTREGA MFX', 'DATA ENTREGA MFX', 'DATA ENTREGA'],
+        ['ENTREGA MFX', 'DATA ENTREGA MFX', 'DATA ENTREGA', 'PRAZO ENTREGA'],
         ''
       );
 
@@ -1046,17 +1098,34 @@ export function parseMfxExcelFile(
       const stageNumber = getProcessStage(statusRawExcel);
       const status = normalizeStatus(statusRawExcel);
 
+      // Helper to add days to an ISO YYYY-MM-DD date string
+      const addDaysIso = (isoStr: string, daysToAdd: number): string => {
+        if (!isoStr || !/^\d{4}-\d{2}-\d{2}$/.test(isoStr)) return '';
+        const [y, m, d] = isoStr.split('-').map(Number);
+        const dt = new Date(Date.UTC(y, m - 1, d + daysToAdd));
+        return dt.toISOString().slice(0, 10);
+      };
+
+      const isAirModal = firstItem.modal === 'AÉREO';
+      const estimatedClearanceIso =
+        rawDesembaracoCell ||
+        rawRegistroDICell ||
+        (firstItem.eta ? addDaysIso(firstItem.eta, isAirModal ? 4 : 7) : '');
+      const estimatedDeliveryIso =
+        rawEntregaMFXCell ||
+        (firstItem.eta ? addDaysIso(firstItem.eta, isAirModal ? 6 : 10) : '');
+
       // Forecast dates vs. Actual completed dates based strictly on Column A stageNumber
       const dataChegadaEfetiva =
         stageNumber >= 4 ? rawChegadaCell || firstItem.eta || undefined : undefined;
       const dataRegistroDI =
-        stageNumber >= 5 ? rawRegistroDICell || firstItem.eta || undefined : undefined;
+        rawRegistroDICell || (stageNumber >= 5 ? estimatedClearanceIso || undefined : undefined);
       const dataDesembaraco =
-        stageNumber >= 6 ? rawDesembaracoCell || firstItem.eta || undefined : undefined;
+        rawDesembaracoCell || (stageNumber >= 6 ? estimatedClearanceIso || undefined : undefined);
       const effectiveDeliveryDate =
-        stageNumber === 7 ? rawEntregaMFXCell || firstItem.eta || '' : '';
+        stageNumber === 7 ? rawEntregaMFXCell || estimatedDeliveryIso || '' : '';
       const forecastDeliveryDate =
-        rawEntregaMFXCell || firstItem.eta || 'A Confirmar';
+        rawEntregaMFXCell || estimatedDeliveryIso || '';
       const { alertaEtaVencido, alertaEntregaAtrasada } = detectDateInconsistencies(
         stageNumber,
         firstItem.eta,
@@ -1070,14 +1139,7 @@ export function parseMfxExcelFile(
         .toUpperCase();
       const regime = normalizeRegime(beneficioRaw);
 
-      const explicitProjeto = String(getCell(firstRow, ['PROJETO'], '')).trim().toUpperCase();
-      const projeto =
-        explicitProjeto ||
-        (fornecedor.includes('TRATOS') || fornecedor.includes('WALTHER')
-          ? 'PETROBRAS'
-          : fornecedor.includes('ACOTEQ')
-          ? 'PRIO'
-          : 'PETROBRAS');
+      const projeto = firstItem.projeto || 'PETROBRAS';
 
       const defaultAC =
         String(getCell(firstRow, ['ATO CONCESSÓRIO', 'ATO CONCESSORIO', 'AC'], '')).trim() ||
@@ -1182,8 +1244,8 @@ export function parseMfxExcelFile(
         fornecedor: it.fornecedor,
         origem: it.origem,
         projeto,
-        dataEmissaoPO: it.dataProntidaoCarga || it.etd || '2026-01-10',
-        previsaoProntidaoCarga: it.dataProntidaoCarga || it.etd || '2026-01-21',
+        dataEmissaoPO: it.dataProntidaoCarga || it.etd || '',
+        previsaoProntidaoCarga: it.dataProntidaoCarga || '',
         etd: it.etd,
         eta: it.eta,
         statusItem: it.status,
@@ -1205,6 +1267,7 @@ export function parseMfxExcelFile(
 
       const partialProc: ImportProcess = {
         id,
+        hasExplicitRefMfx: group.hasExplicitRefMfx,
         compradorResponsavel,
         oc,
         posList: uniquePOs,
@@ -1224,21 +1287,35 @@ export function parseMfxExcelFile(
         despachante: 'ÔMEGA',
         agenteCarga: firstItem.agenteCargas,
         armadorCiaAerea: firstItem.agenteCargas,
-        blAwb: firstItem.blAwb,
+        blAwb: firstItem.blAwb || 'A DEFINIR',
         numeroDiDuimp,
         canal,
         liAnuente: 'NÃO',
         portoAeroportoDestino: localDesembaraco,
-        dataPO: firstItem.dataProntidaoCarga || firstItem.etd || '2026-01-15',
-        dataProntidaoCarga: firstItem.dataProntidaoCarga || firstItem.etd || '2026-01-21',
-        etd: firstItem.etd || 'Aguardando',
-        etaOriginalPO: firstItem.eta || 'Aguardando',
-        eta: firstItem.eta || 'Aguardando',
+        dataPO: firstItem.dataProntidaoCarga || firstItem.etd || '',
+        dataProntidaoCarga: firstItem.dataProntidaoCarga || '',
+        etd: firstItem.etd || '',
+        etaOriginalPO: firstItem.eta || '',
+        eta: firstItem.eta || '',
         dataChegadaEfetiva,
         dataRegistroDI,
         dataDesembaraco,
         dataEntregaMFX: effectiveDeliveryDate || undefined,
-        prazoEntregaMFX: effectiveDeliveryDate || forecastDeliveryDate,
+        prazoEntregaMFX: effectiveDeliveryDate || forecastDeliveryDate || '',
+        etdFormatted: formatDateBR(firstItem.etd || firstItem.dataProntidaoCarga, 'S/ Data'),
+        etaFormatted: formatDateBR(rawChegadaCell || firstItem.eta, 'S/ Data'),
+        clearanceDateFormatted:
+          rawDesembaracoCell || rawRegistroDICell
+            ? formatDateBR(rawDesembaracoCell || rawRegistroDICell, 'S/ Data')
+            : estimatedClearanceIso
+            ? `Est. ${formatDateBR(estimatedClearanceIso, 'S/ Data')}`
+            : 'S/ Data',
+        deliveryDateFormatted:
+          rawEntregaMFXCell
+            ? formatDateBR(rawEntregaMFXCell, 'S/ Data')
+            : estimatedDeliveryIso
+            ? `Est. ${formatDateBR(estimatedDeliveryIso, 'S/ Data')}`
+            : 'S/ Data',
         transitTimeDias: firstItem.transitTimeDias,
         tempoDesembaracoDias,
         tempoEntregaRodoviariaDias,

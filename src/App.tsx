@@ -21,10 +21,14 @@ import { DashboardGrid } from './components/DashboardGrid';
 import { DetailedTableView } from './components/DetailedTableView';
 import { DetailsModal } from './components/DetailsModal';
 import { DeliveriesView } from './components/DeliveriesView';
+import { SupplierCapexFollowupView } from './components/SupplierCapexFollowupView';
 import {
   testConnection,
   subscribeToOnlineProcessos,
   publishToCloudFirestore,
+  clearAllCloudAndLocalData,
+  getCachedProcessos,
+  getCachedMeta,
 } from './services/firebaseService';
 import { isImportProcessDelivered } from './utils/deliveryFilter';
 
@@ -86,19 +90,26 @@ interface ToastMessage {
 }
 
 export default function App() {
-  const [processos, setProcessos] = useState<ImportProcess[]>(PROCESSOS_MFX);
+  const [processos, setProcessos] = useState<ImportProcess[]>(() => {
+    const cached = getCachedProcessos();
+    return cached && cached.length > 0 ? cached : PROCESSOS_MFX;
+  });
   const [pedidosForecast, setPedidosForecast] =
     useState<PedidoForecastRow[]>(PEDIDOS_FORECAST_MFX);
   const [atosConcessorios, setAtosConcessorios] = useState<AtoConcessorio[]>(ATOS_CONCESSORIOS_MFX);
   const [ptax] = useState<PtaxRates>(INITIAL_PTAX);
-  const [sourceFileName, setSourceFileName] = useState<string>(
-    'FUP IMPORTAÇÃO BI (REF. MFX, POs & MATERIAIS)'
-  );
-  const [lastUpdatedTime, setLastUpdatedTime] = useState<string>('03/11/2026 18:05');
+  const [sourceFileName, setSourceFileName] = useState<string>(() => {
+    const meta = getCachedMeta();
+    return meta?.sourceFileName || 'FUP IMPORTAÇÃO BI (REF. MFX, POs & MATERIAIS)';
+  });
+  const [lastUpdatedTime, setLastUpdatedTime] = useState<string>(() => {
+    const meta = getCachedMeta();
+    return meta?.lastUpdatedTime || '03/11/2026 18:05';
+  });
 
   const [darkMode, setDarkMode] = useState<boolean>(false);
   const [lang, setLang] = useState<LanguageCode>('pt');
-  const [activeTab, setActiveTab] = useState<number>(0); // 0 = Deliveries (Customer View), 1-5 = Analytics/Operations, 6 = Master Table
+  const [activeTab, setActiveTab] = useState<number>(0); // 0 = Deliveries, 7 = Follow-up POs & CAPEX, 1-5 = Analytics/Operations, 6 = Master Table
   const [isOnlineConnected, setIsOnlineConnected] = useState<boolean>(true);
   const [isSyncingCloud, setIsSyncingCloud] = useState<boolean>(false);
   const [presentationMode, setPresentationMode] = useState<boolean>(false);
@@ -143,9 +154,7 @@ export default function App() {
 
     const unsubscribe = subscribeToOnlineProcessos(
       (onlineProcessos, meta) => {
-        if (onlineProcessos.length > 0) {
-          setProcessos(onlineProcessos);
-        }
+        setProcessos(onlineProcessos);
         if (meta?.sourceFileName) {
           setSourceFileName(meta.sourceFileName);
         }
@@ -614,6 +623,27 @@ export default function App() {
     );
   };
 
+  const handleClearDatabase = async () => {
+    setIsSyncingCloud(true);
+    setProcessos([]);
+    setPedidosForecast([]);
+    setFilters(INITIAL_FILTERS);
+    const now = new Date();
+    const timeStr = `${now.toLocaleDateString('pt-BR')} ${now.toLocaleTimeString('pt-BR', {
+      hour: '2-digit',
+      minute: '2-digit',
+    })}`;
+    setSourceFileName('Base Limpa — Aguardando Upload XLSX');
+    setLastUpdatedTime(timeStr);
+    await clearAllCloudAndLocalData();
+    setIsSyncingCloud(false);
+    addToast(
+      '🗑️ Base Limpa com Sucesso!',
+      'Todos os dados anteriores e de demonstração foram removidos. Carregue sua planilha XLSX para importar exclusivamente os dados reais.',
+      'info'
+    );
+  };
+
   const handleExportExcel = () => {
     exportMfxToExcel(
       filteredProcessos,
@@ -905,9 +935,21 @@ export default function App() {
               {t.exportExcelBtn}
             </button>
 
-            {/* Carregar XLSX Button - Hidden in Presentation Mode */}
+            {/* Carregar XLSX & Limpar Base Buttons - Hidden in Presentation Mode */}
             {!presentationMode && (
               <>
+                <button
+                  id="reset-database-btn"
+                  type="button"
+                  onClick={handleClearDatabase}
+                  disabled={isSyncingCloud}
+                  title="Limpar base de demonstração/cache para garantir 100% apenas dados da planilha XLSX"
+                  className="bg-red-600 hover:bg-red-700 text-white text-xs font-bold px-3.5 py-2 rounded-lg shadow-xs transition-colors flex items-center gap-1.5 whitespace-nowrap cursor-pointer disabled:opacity-50"
+                >
+                  <i className="fas fa-trash-can"></i>
+                  <span>🗑️ Limpar Base</span>
+                </button>
+
                 <label
                   htmlFor="file-upload"
                   className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold px-3.5 py-2 rounded-lg shadow-xs transition-colors flex items-center gap-1.5 whitespace-nowrap cursor-pointer"
@@ -936,10 +978,10 @@ export default function App() {
           <div className="p-3 rounded-lg bg-gray-50 dark:bg-[#111827] border border-gray-200 dark:border-gray-700 flex items-center justify-between">
             <div>
               <span className="text-[11px] font-semibold text-gray-500 dark:text-gray-400 block">
-                {t.totalProcesses}
+                {t.totalProcesses} (Base: {processos.length})
               </span>
               <span className="text-lg font-extrabold font-mono text-gray-900 dark:text-white tabular-nums">
-                {kpiMetrics.totalCount} Processos ({kpiMetrics.totalFcl} FCL)
+                {processos.length} Processos ({kpiMetrics.totalCount} Exibidos)
               </span>
             </div>
             <i className="fas fa-ship text-blue-600 text-xl opacity-80"></i>
@@ -999,9 +1041,9 @@ export default function App() {
       </header>
 
       {/* =====================================================================
-          MULTI-SELECT FILTER PANEL (#filter-container) - Hidden on Tab 0 (Deliveries has its own dedicated search)
+          MULTI-SELECT FILTER PANEL (#filter-container) - Hidden on Tab 0 & Tab 7 (each has its own dedicated controls)
          ===================================================================== */}
-      {activeTab !== 0 && (
+      {activeTab !== 0 && activeTab !== 7 && (
         <FilterPanel
           filters={filters}
           setFilters={setFilters}
@@ -1036,15 +1078,21 @@ export default function App() {
       )}
 
       {/* =====================================================================
-          THE 7 VIEW TABS (#view-tabs-container)
+          THE 8 VIEW TABS (#view-tabs-container)
          ===================================================================== */}
       <nav
         id="view-tabs-container"
         className="border-b border-gray-200 dark:border-[#374151] mb-6 bg-white dark:bg-[#1f2937] rounded-t-xl px-4 shadow-xs overflow-x-auto"
       >
-        <div className="flex items-center space-x-2 md:space-x-6 min-w-max">
+        <div className="flex items-center space-x-2 md:space-x-5 min-w-max">
           {[
             { id: 0, icon: 'fa-box-open', label: t.tabDeliveries, highlight: true },
+            {
+              id: 7,
+              icon: 'fa-industry',
+              label: '🏭 Follow-up POs & CAPEX Projetos',
+              highlight: true,
+            },
             { id: 1, icon: 'fa-file-invoice', label: t.tab1 },
             { id: 2, icon: 'fa-stopwatch', label: t.tab2 },
             { id: 3, icon: 'fa-coins', label: t.tab3 },
@@ -1090,7 +1138,7 @@ export default function App() {
       )}
 
       {/* =====================================================================
-          MAIN DISPLAY: TAB 0 (DELIVERIES), TAB 6 (MASTER TABLE), OR TABS 1-5 (GRID)
+          MAIN DISPLAY: TAB 0 (DELIVERIES), TAB 7 (SUPPLIER & CAPEX), TAB 6 (MASTER TABLE), OR TABS 1-5 (GRID)
          ===================================================================== */}
       <main>
         {activeTab === 0 ? (
@@ -1106,6 +1154,17 @@ export default function App() {
             onTogglePresentationMode={() => setPresentationMode(!presentationMode)}
             lastUpdatedTime={lastUpdatedTime}
             sourceFileName={sourceFileName}
+          />
+        ) : activeTab === 7 ? (
+          <SupplierCapexFollowupView
+            processos={processos}
+            pedidosForecast={pedidosForecast}
+            onSelectProcess={(proc) => {
+              setSelectedAC(null);
+              setModalInitialTab('overview');
+              setSelectedProcess(proc);
+            }}
+            onNotify={addToast}
           />
         ) : activeTab === 6 ? (
           <DetailedTableView

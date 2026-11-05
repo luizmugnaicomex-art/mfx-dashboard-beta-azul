@@ -7,6 +7,7 @@ import {
   getProcessTargetDate,
   isImportProcessDelivered,
   formatDateBR,
+  getProcess4StepTrackerInfo,
 } from '../utils/deliveryFilter';
 
 interface ComexTvSlidePanelProps {
@@ -841,12 +842,7 @@ export const ComexTvSlidePanel: React.FC<ComexTvSlidePanelProps> = ({
               const targetDate = getProcessTargetDate(p, weekDateField);
               const dayInfo = getDayOfWeekInfo(targetDate);
               const pend = getProcessPendingStatus(p);
-              const stage = p.stageNumber ?? 3;
-
-              const step1Done = stage >= 2;
-              const step2Done = stage >= 4;
-              const step3Done = stage >= 6;
-              const step4Done = stage === 7;
+              const tracker4 = getProcess4StepTrackerInfo(p);
 
               return (
                 <div
@@ -969,26 +965,28 @@ export const ComexTvSlidePanel: React.FC<ComexTvSlidePanelProps> = ({
                   {/* Bottom 4-Step Visual Progress & Pending Action Reason */}
                   <div className="mt-3 pt-3 border-t border-slate-800/90 space-y-2">
                     <div className="grid grid-cols-4 gap-2">
-                      {[
-                        { label: '1. Embarque', done: step1Done, active: stage === 2 },
-                        { label: '2. Chegada', done: step2Done, active: stage === 3 },
-                        { label: '3. Liberação', done: step3Done, active: stage === 4 || stage === 5 },
-                        { label: '4. Fábrica MFX', done: step4Done, active: stage === 6 },
-                      ].map((st, idx) => (
-                        <div
-                          key={idx}
-                          className={`py-1.5 px-2 rounded-lg text-center text-xs font-extrabold border ${
-                            st.done
-                              ? 'bg-emerald-500/20 border-emerald-500/60 text-emerald-300'
-                              : st.active
-                              ? 'bg-amber-500/30 border-amber-400 text-amber-200 ring-2 ring-amber-400/30'
-                              : 'bg-slate-950/70 border-slate-800 text-slate-500'
-                          }`}
-                        >
-                          {st.done ? '✅ ' : st.active ? '⏳ ' : '🕒 '}
-                          {st.label}
-                        </div>
-                      ))}
+                      {[tracker4.step1, tracker4.step2, tracker4.step3, tracker4.step4].map(
+                        (st, idx) => (
+                          <div
+                            key={idx}
+                            className={`py-1.5 px-2 rounded-lg text-center text-xs font-extrabold border flex flex-col justify-between ${
+                              st.state === 'completed'
+                                ? 'bg-emerald-500/20 border-emerald-500/60 text-emerald-300'
+                                : st.state === 'stalled'
+                                ? 'bg-red-500/30 border-red-400 text-red-200 ring-2 ring-red-400/30'
+                                : st.state === 'current'
+                                ? 'bg-amber-500/30 border-amber-400 text-amber-200 ring-2 ring-amber-400/30'
+                                : 'bg-slate-950/70 border-slate-800 text-slate-400'
+                            }`}
+                          >
+                            <div className="text-[10px] font-extrabold">{st.title}</div>
+                            <div className="text-[10px] mt-0.5">{st.badge}</div>
+                            <div className="font-mono text-[11px] font-black mt-1 pt-0.5 border-t border-white/15">
+                              {st.dateFormatted}
+                            </div>
+                          </div>
+                        )
+                      )}
                     </div>
 
                     <div className="flex items-center justify-between text-xs bg-slate-950/90 px-3 py-1.5 rounded-lg border border-slate-800">

@@ -12,6 +12,7 @@ import {
   isImportProcessDelivered,
   exportWeekDeliveriesToCSV,
   formatDateBR,
+  getProcess4StepTrackerInfo,
 } from '../utils/deliveryFilter';
 import { ComexTvSlidePanel } from './ComexTvSlidePanel';
 
@@ -333,15 +334,6 @@ export const DeliveriesView: React.FC<DeliveriesViewProps> = ({
       activePeriodInfo.label,
       weekDateField
     );
-  };
-
-  const formatDateDisplay = (dateStr?: string) => {
-    if (!dateStr || dateStr === 'Aguardando' || dateStr === 'A Confirmar') return dateStr || 'A Confirmar';
-    if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
-      const [y, m, d] = dateStr.split('-');
-      return `${d}/${m}/${y}`;
-    }
-    return dateStr;
   };
 
   return (
@@ -735,8 +727,8 @@ export const DeliveriesView: React.FC<DeliveriesViewProps> = ({
               <span>Sem. Ant.</span>
             </button>
 
-            {/* Week Picker Dropdown & Input */}
-            <div className="relative flex-1 min-w-[170px]">
+            {/* Week Picker Dropdown & Native Calendar Week Input */}
+            <div className="relative flex-1 min-w-[160px] flex items-center gap-1.5">
               <select
                 id="delivery-week-select"
                 aria-label="Selecionar Semana Específica"
@@ -762,6 +754,20 @@ export const DeliveriesView: React.FC<DeliveriesViewProps> = ({
                   </option>
                 ))}
               </select>
+
+              <input
+                type="week"
+                id="delivery-week-picker"
+                aria-label="Escolher Semana no Calendário"
+                value={customIsoWeek}
+                onChange={(e) => {
+                  if (e.target.value) {
+                    setCustomIsoWeek(e.target.value);
+                    setWeekMode('CUSTOM_WEEK');
+                  }
+                }}
+                className="py-1.5 px-2 text-xs rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-[#111827] text-gray-700 dark:text-gray-200 font-mono font-bold cursor-pointer max-w-[135px]"
+              />
             </div>
 
             <button
@@ -839,7 +845,6 @@ export const DeliveriesView: React.FC<DeliveriesViewProps> = ({
             const isDelivered = isImportProcessDelivered(p);
             const targetDate = getProcessTargetDate(p, weekDateField);
             const dayInfo = getDayOfWeekInfo(targetDate);
-            const stage = p.stageNumber ?? 3;
             const isAir = p.modal === 'AÉREO';
 
             // Check if process has attention alert
@@ -865,15 +870,21 @@ export const DeliveriesView: React.FC<DeliveriesViewProps> = ({
                     .map((s) => s.trim())
                     .filter(Boolean);
 
-            // 4 Steps Tracker:
-            // Step 1: Pedido & Embarque
-            // Step 2: Chegada Brasil (ETA)
-            // Step 3: Liberação Alfândega (DI/DUIMP)
-            // Step 4: Entrega Fábrica MFX
-            const step1State = stage >= 2 ? 'completed' : 'current';
-            const step2State = stage >= 4 ? 'completed' : stage === 3 ? 'current' : 'forecast';
-            const step3State = stage >= 6 ? 'completed' : stage === 4 || stage === 5 ? 'current' : 'forecast';
-            const step4State = stage === 7 ? 'completed' : stage === 6 ? 'current' : 'forecast';
+            // 4 Steps Tracker with Mandatory Dates (DD/MM/YYYY or Est. DD/MM/YYYY or 'S/ Data')
+            const tracker4 = getProcess4StepTrackerInfo(p);
+
+            const renderStepBoxClass = (state: 'completed' | 'current' | 'stalled' | 'forecast') => {
+              if (state === 'completed') {
+                return 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-400 text-emerald-800 dark:text-emerald-300';
+              }
+              if (state === 'stalled') {
+                return 'bg-red-50 dark:bg-red-950/60 border-2 border-red-500 text-red-800 dark:text-red-200 ring-2 ring-red-400/30';
+              }
+              if (state === 'current') {
+                return 'bg-blue-50 dark:bg-blue-950/50 border-blue-500 text-blue-800 dark:text-blue-200 ring-2 ring-blue-400/20';
+              }
+              return 'bg-gray-50 dark:bg-gray-800/60 border-dashed border-gray-300 dark:border-gray-700 text-gray-500 dark:text-gray-400';
+            };
 
             return (
               <div
@@ -933,23 +944,23 @@ export const DeliveriesView: React.FC<DeliveriesViewProps> = ({
                     {!isDelivered && (
                       <span
                         className={`text-[11px] font-black uppercase px-2.5 py-0.5 rounded border flex items-center gap-1 ${
-                          p.cargaParadaDrawback
+                          tracker4.step3.state === 'stalled' || p.cargaParadaDrawback
                             ? 'bg-red-100 dark:bg-red-950/80 text-red-800 dark:text-red-200 border-red-300 dark:border-red-700 animate-pulse'
                             : isAttention
                             ? 'bg-red-50 dark:bg-red-950/60 text-red-700 dark:text-red-300 border-red-200 dark:border-red-800'
-                            : stage === 4 || stage === 5
+                            : tracker4.currentStepIndex === 3
                             ? 'bg-amber-50 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border-amber-200 dark:border-amber-800'
                             : 'bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800'
                         }`}
                       >
                         <i className="fas fa-circle-exclamation text-[10px]"></i>
-                        {p.cargaParadaDrawback
-                          ? 'PENDENTE: DRAWBACK / AC'
+                        {tracker4.step3.state === 'stalled' || p.cargaParadaDrawback
+                          ? 'PENDENTE: PARADO DRAWBACK / AC'
                           : isAttention
                           ? 'PENDENTE: PRAZO VENCIDO'
-                          : stage === 4 || stage === 5
+                          : tracker4.currentStepIndex === 3
                           ? 'PENDENTE: LIBERAÇÃO PORTO/DI'
-                          : stage === 6
+                          : tracker4.currentStepIndex === 3.5
                           ? 'PENDENTE: ENTREGA FÁBRICA'
                           : 'PENDENTE: CHEGADA / TRÂNSITO'}
                       </span>
@@ -966,8 +977,8 @@ export const DeliveriesView: React.FC<DeliveriesViewProps> = ({
                 </div>
 
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-center">
-                  {/* Left Column (5 Cols): Supplier, Buyer, Material Preview */}
-                  <div className="lg:col-span-5 space-y-2">
+                  {/* Left Column (4 Cols): Supplier, Buyer, Material Preview */}
+                  <div className="lg:col-span-4 space-y-2">
                     <div>
                       <h4 className="text-sm font-extrabold text-gray-900 dark:text-white">
                         {p.fornecedor} <span className="text-xs font-normal text-gray-500 dark:text-gray-400">({p.paisOrigem})</span>
@@ -998,8 +1009,8 @@ export const DeliveriesView: React.FC<DeliveriesViewProps> = ({
                     </div>
                   </div>
 
-                  {/* Middle Column (4 Cols): Visual 4-Step Customer Progress Tracker */}
-                  <div className="lg:col-span-4 space-y-2">
+                  {/* Middle Column (5 Cols): Visual 4-Step Customer Progress Tracker with Mandatory Dates */}
+                  <div className="lg:col-span-5 space-y-2">
                     <div className="flex items-center justify-between text-[11px]">
                       <span className="font-extrabold text-gray-700 dark:text-gray-300 flex items-center gap-1.5">
                         <i className={`fas ${isAir ? 'fa-plane text-sky-500' : 'fa-ship text-blue-500'}`}></i>
@@ -1008,7 +1019,9 @@ export const DeliveriesView: React.FC<DeliveriesViewProps> = ({
                           className={
                             isDelivered
                               ? 'text-emerald-600 dark:text-emerald-400'
-                              : stage === 3
+                              : tracker4.step3.state === 'stalled'
+                              ? 'text-red-600 dark:text-red-400'
+                              : tracker4.currentStepIndex === 2
                               ? 'text-blue-600 dark:text-blue-400'
                               : 'text-amber-600 dark:text-amber-400'
                           }
@@ -1018,67 +1031,31 @@ export const DeliveriesView: React.FC<DeliveriesViewProps> = ({
                       </span>
                     </div>
 
-                    {/* Visual 4 Steps Progress Bar */}
-                    <div className="grid grid-cols-4 gap-1.5 pt-1">
-                      {/* Step 1: Pedido & Embarque */}
-                      <div
-                        className={`p-2 rounded-lg text-center border ${
-                          step1State === 'completed'
-                            ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-400 text-emerald-800 dark:text-emerald-300'
-                            : 'bg-blue-50 dark:bg-blue-950/50 border-blue-400 text-blue-800 dark:text-blue-300'
-                        }`}
-                      >
-                        <div className="text-[10px] font-bold">1. Embarque</div>
-                        <div className="text-[10px] mt-0.5">{step1State === 'completed' ? '✅ Concluído' : '⏳ Atual'}</div>
-                      </div>
-
-                      {/* Step 2: Chegada Brasil (ETA) */}
-                      <div
-                        className={`p-2 rounded-lg text-center border ${
-                          step2State === 'completed'
-                            ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-400 text-emerald-800 dark:text-emerald-300'
-                            : step2State === 'current'
-                            ? 'bg-blue-50 dark:bg-blue-950/50 border-blue-500 text-blue-800 dark:text-blue-300 ring-2 ring-blue-400/20'
-                            : 'bg-gray-50 dark:bg-gray-800/60 border-dashed border-gray-300 dark:border-gray-700 text-gray-500'
-                        }`}
-                      >
-                        <div className="text-[10px] font-bold">2. Chegada</div>
-                        <div className="text-[10px] mt-0.5">
-                          {step2State === 'completed' ? '✅ Chegou' : step2State === 'current' ? '⏳ No Mar' : '🕒 Previsto'}
-                        </div>
-                      </div>
-
-                      {/* Step 3: Liberação Alfândega */}
-                      <div
-                        className={`p-2 rounded-lg text-center border ${
-                          step3State === 'completed'
-                            ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-400 text-emerald-800 dark:text-emerald-300'
-                            : step3State === 'current'
-                            ? 'bg-amber-50 dark:bg-amber-950/50 border-amber-500 text-amber-800 dark:text-amber-300 ring-2 ring-amber-400/20'
-                            : 'bg-gray-50 dark:bg-gray-800/60 border-dashed border-gray-300 dark:border-gray-700 text-gray-500'
-                        }`}
-                      >
-                        <div className="text-[10px] font-bold">3. Liberação</div>
-                        <div className="text-[10px] mt-0.5">
-                          {step3State === 'completed' ? '✅ Liberado' : step3State === 'current' ? '⏳ Porto/DI' : '🕒 Previsto'}
-                        </div>
-                      </div>
-
-                      {/* Step 4: Entrega Fábrica MFX */}
-                      <div
-                        className={`p-2 rounded-lg text-center border ${
-                          step4State === 'completed'
-                            ? 'bg-emerald-100 dark:bg-emerald-950/60 border-emerald-500 text-emerald-900 dark:text-emerald-200'
-                            : step4State === 'current'
-                            ? 'bg-blue-50 dark:bg-blue-950/50 border-blue-500 text-blue-800 dark:text-blue-300 ring-2 ring-blue-400/20'
-                            : 'bg-gray-50 dark:bg-gray-800/60 border-dashed border-gray-300 dark:border-gray-700 text-gray-500'
-                        }`}
-                      >
-                        <div className="text-[10px] font-bold">4. Fábrica</div>
-                        <div className="text-[10px] mt-0.5">
-                          {step4State === 'completed' ? '✅ Entregue' : step4State === 'current' ? '⏳ Em Rota' : '🕒 Previsto'}
-                        </div>
-                      </div>
+                    {/* Visual 4 Steps Progress Bar — 3 Mandatory Lines per Box */}
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 pt-1">
+                      {[tracker4.step1, tracker4.step2, tracker4.step3, tracker4.step4].map(
+                        (st, sIdx) => (
+                          <div
+                            key={sIdx}
+                            className={`p-2 rounded-lg text-center border flex flex-col justify-between ${renderStepBoxClass(
+                              st.state
+                            )}`}
+                          >
+                            {/* Line 1: Step Title */}
+                            <div className="text-[10px] font-extrabold leading-tight">
+                              {st.title}
+                            </div>
+                            {/* Line 2: Status Badge */}
+                            <div className="text-[10px] font-bold mt-0.5 leading-tight">
+                              {st.badge}
+                            </div>
+                            {/* Line 3: Mandatory Formatted Date */}
+                            <div className="font-mono text-[11px] font-extrabold mt-1 pt-1 border-t border-current/15 tracking-tight">
+                              {st.dateFormatted}
+                            </div>
+                          </div>
+                        )
+                      )}
                     </div>
 
                     {isAttention && (
@@ -1112,12 +1089,12 @@ export const DeliveriesView: React.FC<DeliveriesViewProps> = ({
                             : 'text-blue-700 dark:text-blue-300'
                         }`}
                       >
-                        {formatDateDisplay(isDelivered ? p.dataEntregaMFX || p.prazoEntregaMFX : p.prazoEntregaMFX)}
+                        {tracker4.step4.dateFormatted}
                       </div>
 
                       <div className="mt-2 pt-2 border-t border-gray-200 dark:border-gray-700/60 text-[11px] text-gray-600 dark:text-gray-300 space-y-0.5">
                         <div>
-                          ETA Porto: <strong className="font-mono">{formatDateDisplay(p.dataChegadaEfetiva || p.eta)}</strong>
+                          ETA Porto/Aero: <strong className="font-mono">{tracker4.step2.dateFormatted}</strong>
                         </div>
                         <div>
                           Modal: <strong>{p.modal}</strong> ({p.blAwb})

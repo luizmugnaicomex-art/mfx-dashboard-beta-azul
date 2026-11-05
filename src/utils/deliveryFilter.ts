@@ -1,7 +1,7 @@
 import { ImportProcess } from '../types/mfx';
 
 // ============================================================================
-// DELIVERY FILTER & WEEK CALCULATION ENGINE
+// DELIVERY FILTER, 4-STEP DATE ENGINE & WEEK CALCULATION ENGINE
 // Strict mathematical week ranges (Monday to Sunday) & Column A (STATUS) fidelity
 // ============================================================================
 
@@ -43,7 +43,6 @@ export function isImportProcessDelivered(proc: ImportProcess): boolean {
 }
 
 // 2. Helper: Parse date string safely into a Date object at noon (12:00:00)
-// To prevent timezone offset shifts when comparing calendar dates
 export function parseDateSafe(dateVal?: string | Date | null): Date | null {
   if (!dateVal) return null;
   if (dateVal instanceof Date) return isNaN(dateVal.getTime()) ? null : dateVal;
@@ -53,6 +52,7 @@ export function parseDateSafe(dateVal?: string | Date | null): Date | null {
     !str ||
     str === 'Aguardando' ||
     str === 'A Confirmar' ||
+    str === 'S/ Data' ||
     str === '-' ||
     str.startsWith('#') ||
     str === 'N/A'
@@ -60,31 +60,336 @@ export function parseDateSafe(dateVal?: string | Date | null): Date | null {
     return null;
   }
 
+  // Strip optional "Est. " prefix if present
+  const cleanStr = str.replace(/^Est\.\s*/i, '').trim();
+
   // Format: YYYY-MM-DD
-  if (/^\d{4}-\d{2}-\d{2}/.test(str)) {
-    const [y, m, d] = str.slice(0, 10).split('-').map(Number);
+  if (/^\d{4}-\d{2}-\d{2}/.test(cleanStr)) {
+    const [y, m, d] = cleanStr.slice(0, 10).split('-').map(Number);
     const date = new Date(y, m - 1, d, 12, 0, 0);
     return isNaN(date.getTime()) ? null : date;
   }
 
   // Format: DD/MM/YYYY
-  if (/^\d{2}\/\d{2}\/\d{4}/.test(str)) {
-    const [d, m, y] = str.slice(0, 10).split('/').map(Number);
+  if (/^\d{2}\/\d{2}\/\d{4}/.test(cleanStr)) {
+    const [d, m, y] = cleanStr.slice(0, 10).split('/').map(Number);
     const date = new Date(y, m - 1, d, 12, 0, 0);
     return isNaN(date.getTime()) ? null : date;
   }
 
-  const parsed = new Date(str);
+  const parsed = new Date(cleanStr);
   return isNaN(parsed.getTime()) ? null : parsed;
 }
 
+export const parseStrictDate = parseDateSafe;
+
 // 3. Helper: Format Date to DD/MM/YYYY
 export function formatDateBR(dt: Date | null): string {
-  if (!dt || isNaN(dt.getTime())) return '-';
+  if (!dt || isNaN(dt.getTime())) return 'S/ Data';
   const d = String(dt.getDate()).padStart(2, '0');
   const m = String(dt.getMonth() + 1).padStart(2, '0');
   const y = dt.getFullYear();
   return `${d}/${m}/${y}`;
+}
+
+export function addDaysToDate(dt: Date, days: number): Date {
+  const result = new Date(dt.getTime());
+  result.setDate(result.getDate() + days);
+  return result;
+}
+
+// ============================================================================
+// 4-STEP TRACKER ENGINE WITH EXACT DATES (DD/MM/YYYY) & DRAWBACK/MODAL RULES
+// ============================================================================
+
+export interface StepBoxItem {
+  title: string;
+  badge: string;
+  dateFormatted: string;
+  state: 'completed' | 'current' | 'stalled' | 'forecast';
+  style: string;
+}
+
+export interface Step4TrackerInfo {
+  etdFormatted: string;
+  etaFormatted: string;
+  clearanceDateFormatted: string;
+  deliveryDateFormatted: string;
+  step1StatusLabel: string;
+  step2StatusLabel: string;
+  step3StatusLabel: string;
+  step4StatusLabel: string;
+  step1Style: string;
+  step2Style: string;
+  step3Style: string;
+  step4Style: string;
+  isDrawbackBlocked: boolean;
+  isCustomsStage: boolean;
+  numericStep: 1 | 2 | 3 | 3.5 | 4;
+  currentStepIndex: 1 | 2 | 3 | 3.5 | 4;
+  step1: StepBoxItem;
+  step2: StepBoxItem;
+  step3: StepBoxItem;
+  step4: StepBoxItem;
+}
+
+export function getProcess4StepTrackerInfo(proc: ImportProcess): Step4TrackerInfo {
+  const rawNorm = (proc.statusRawExcel || proc.status || '')
+    .toUpperCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim();
+
+  const isAir = proc.modal === 'AÉREO' || String(proc.modal || '').toUpperCase().includes('AER');
+  const delivered = isImportProcessDelivered(proc);
+
+  // 1. Parse base dates
+  const etdDate = parseDateSafe(proc.etd) || parseDateSafe(proc.dataProntidaoCarga);
+  const etaDate = parseDateSafe(proc.dataChegadaEfetiva) || parseDateSafe(proc.eta);
+  const explicitClearanceDate = parseDateSafe(proc.dataDesembaraco) || parseDateSafe(proc.dataRegistroDI);
+  const explicitDeliveryDate = parseDateSafe(proc.dataEntregaMFX) || parseDateSafe(proc.prazoEntregaMFX);
+
+  // Format ETD (Box 1)
+  const etdFormatted = proc.etdFormatted || (etdDate ? formatDateBR(etdDate) : 'S/ Data');
+
+  // Format ETA (Box 2)
+  const etaFormatted = proc.etaFormatted || (etaDate ? formatDateBR(etaDate) : 'S/ Data');
+
+  // Format Clearance Date (Box 3): Explicit DI/Clearance date, or Estimated ETA + 4d (Air) / + 7d (Sea)
+  let clearanceDateFormatted = proc.clearanceDateFormatted || '';
+  if (!clearanceDateFormatted) {
+    if (explicitClearanceDate && (!etaDate || explicitClearanceDate.getTime() !== etaDate.getTime())) {
+      clearanceDateFormatted = formatDateBR(explicitClearanceDate);
+    } else if (etaDate) {
+      const estClearance = addDaysToDate(etaDate, isAir ? 4 : 7);
+      clearanceDateFormatted = `Est. ${formatDateBR(estClearance)}`;
+    } else {
+      clearanceDateFormatted = 'S/ Data';
+    }
+  }
+
+  // Format Factory Delivery Date (Box 4): Explicit Delivery date, or Estimated ETA + 6d (Air) / + 10d (Sea)
+  let deliveryDateFormatted = proc.deliveryDateFormatted || '';
+  if (!deliveryDateFormatted) {
+    if (delivered && explicitDeliveryDate) {
+      deliveryDateFormatted = formatDateBR(explicitDeliveryDate);
+    } else if (
+      explicitDeliveryDate &&
+      (!etaDate || explicitDeliveryDate.getTime() !== etaDate.getTime())
+    ) {
+      deliveryDateFormatted = formatDateBR(explicitDeliveryDate);
+    } else if (etaDate) {
+      const estDelivery = addDaysToDate(etaDate, isAir ? 6 : 10);
+      deliveryDateFormatted = `Est. ${formatDateBR(estDelivery)}`;
+    } else {
+      deliveryDateFormatted = 'S/ Data';
+    }
+  }
+
+  // 2. Determine exact operational step from Column A (STATUS)
+  const isWaitingArrival =
+    rawNorm.includes('AG. CHEGADA') ||
+    rawNorm.includes('AGUARDANDO CHEGADA') ||
+    rawNorm.includes('EM TRANSITO') ||
+    (rawNorm.includes('TRANSITO') && !rawNorm.includes('RODOVIARIO')) ||
+    rawNorm.includes('EMBARCAD');
+
+  const isDrawbackBlocked =
+    !delivered &&
+    (proc.cargaParadaDrawback ||
+      rawNorm.includes('DRAWBACK') ||
+      rawNorm.includes('PARADO') ||
+      rawNorm.includes('AG. ATO') ||
+      rawNorm.includes('ATO CONCESSORIO') ||
+      rawNorm.includes('AG. AC') ||
+      rawNorm.includes('BLOQUEAD'));
+
+  const isCustomsKeyword =
+    !isWaitingArrival &&
+    (isDrawbackBlocked ||
+      rawNorm.includes('AG. DI') ||
+      rawNorm.includes('AG. REGISTRO') ||
+      rawNorm.includes('AGUARDANDO REGISTRO') ||
+      rawNorm.includes('PRESENCA') ||
+      rawNorm.includes('NO PORTO') ||
+      rawNorm.includes('NO AEROPORTO') ||
+      rawNorm.includes('DESEMBARACO') ||
+      rawNorm.includes('CANAL') ||
+      rawNorm.includes('PARAMETRIZAD') ||
+      rawNorm.includes('PORTO') ||
+      rawNorm.includes('AEROPORTO') ||
+      rawNorm.includes('TECON') ||
+      rawNorm.includes('TECA'));
+
+  const isRoadDelivery =
+    !delivered &&
+    (proc.stageNumber === 6 ||
+      rawNorm.includes('RODOVIARIO') ||
+      rawNorm.includes('AG. ENTREGA') ||
+      rawNorm.includes('AGUARDANDO ENTREGA') ||
+      rawNorm.includes('DESEMBARACADO') ||
+      rawNorm.includes('LIBERADO') ||
+      rawNorm.includes('CARREGADO') ||
+      rawNorm.includes('EM ROTA'));
+
+  const isPreShipment =
+    !delivered &&
+    !isRoadDelivery &&
+    !isCustomsKeyword &&
+    !isWaitingArrival &&
+    (proc.stageNumber === 1 ||
+      proc.stageNumber === 2 ||
+      rawNorm.includes('PRODUCAO') ||
+      rawNorm.includes('FORNECEDOR') ||
+      rawNorm.includes('AG. EMBARQUE') ||
+      rawNorm.includes('AGUARDANDO EMBARQUE') ||
+      rawNorm.includes('PRONTIDAO') ||
+      rawNorm.includes('FABRICACAO') ||
+      rawNorm.includes('PEDIDO') ||
+      rawNorm.includes('COLETA') ||
+      rawNorm.includes('AWB'));
+
+  // Special check from Requirement 4:
+  // If in customs/drawback, Step 2 is completed unless ETA is in the future AND there is no ETD
+  const now = new Date();
+  const etaInFutureWithoutEtd = Boolean(!etdDate && etaDate && etaDate.getTime() > now.getTime());
+
+  let numericStep: 1 | 2 | 3 | 3.5 | 4 = 2;
+  if (delivered) {
+    numericStep = 4;
+  } else if (isRoadDelivery) {
+    numericStep = 3.5;
+  } else if (isCustomsKeyword || proc.stageNumber === 4 || proc.stageNumber === 5) {
+    numericStep = etaInFutureWithoutEtd ? 1 : 3;
+  } else if (isPreShipment) {
+    numericStep = 1;
+  } else {
+    numericStep = 2;
+  }
+
+  // Styles palette
+  const styleCompleted =
+    'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-400 text-emerald-800 dark:text-emerald-300';
+  const styleCurrentBlue =
+    'bg-blue-50 dark:bg-blue-950/50 border-blue-500 text-blue-800 dark:text-blue-300 ring-2 ring-blue-400/20';
+  const styleCurrentAmber =
+    'bg-amber-50 dark:bg-amber-950/50 border-amber-500 text-amber-800 dark:text-amber-300 ring-2 ring-amber-400/20';
+  const styleCurrentRed =
+    'bg-red-50 dark:bg-red-950/60 border-red-500 text-red-800 dark:text-red-200 ring-2 ring-red-500/30';
+  const styleForecast =
+    'bg-gray-50 dark:bg-gray-800/60 border-dashed border-gray-300 dark:border-gray-700 text-gray-500 dark:text-gray-400';
+
+  // Step 1: 1. Embarque
+  const step1Completed = numericStep > 1;
+  const step1StatusLabel = step1Completed
+    ? numericStep === 3 && isCustomsKeyword
+      ? '✅ Concluído'
+      : '✅ Embarcado'
+    : '⏳ Ag. Embarque';
+  const step1Style = step1Completed ? styleCompleted : styleCurrentBlue;
+
+  // Step 2: 2. Chegada
+  const step2Completed = numericStep > 2;
+  const step2Active = numericStep === 2;
+  const step2StatusLabel = step2Completed
+    ? isCustomsKeyword
+      ? '✅ Chegou Brasil'
+      : '✅ No Porto/Aerop.'
+    : step2Active
+    ? isAir
+      ? '✈️ Em Voo'
+      : '🚢 No Mar'
+    : '🕒 Previsto';
+  const step2Style = step2Completed
+    ? styleCompleted
+    : step2Active
+    ? styleCurrentBlue
+    : styleForecast;
+
+  // Step 3: 3. Liberação
+  const step3Completed = numericStep > 3;
+  const step3Active = numericStep === 3;
+  const step3StatusLabel = step3Completed
+    ? '✅ Desembaraçado'
+    : isDrawbackBlocked
+    ? '🛑 Parado Drawback'
+    : step3Active
+    ? '⏳ Em Liberação'
+    : '🕒 Previsto';
+  const step3Style = step3Completed
+    ? styleCompleted
+    : isDrawbackBlocked
+    ? styleCurrentRed
+    : step3Active
+    ? styleCurrentAmber
+    : styleForecast;
+
+  // Step 4: 4. Fábrica
+  const step4Completed = numericStep === 4;
+  const step4Active = numericStep === 3.5;
+  const step4StatusLabel = step4Completed
+    ? '✅ Entregue MFX'
+    : step4Active
+    ? '🚛 Em Rota MFX'
+    : '🕒 Previsto';
+  const step4Style = step4Completed
+    ? 'bg-emerald-100 dark:bg-emerald-950/60 border-emerald-500 text-emerald-900 dark:text-emerald-200'
+    : step4Active
+    ? styleCurrentBlue
+    : styleForecast;
+
+  return {
+    etdFormatted,
+    etaFormatted,
+    clearanceDateFormatted,
+    deliveryDateFormatted,
+    step1StatusLabel,
+    step2StatusLabel,
+    step3StatusLabel,
+    step4StatusLabel,
+    step1Style,
+    step2Style,
+    step3Style,
+    step4Style,
+    isDrawbackBlocked,
+    isCustomsStage: numericStep === 3,
+    numericStep,
+    currentStepIndex: numericStep,
+    step1: {
+      title: '1. Embarque',
+      badge: step1StatusLabel,
+      dateFormatted: etdFormatted,
+      state: step1Completed ? 'completed' : 'current',
+      style: step1Style,
+    },
+    step2: {
+      title: '2. Chegada',
+      badge: step2StatusLabel,
+      dateFormatted: etaFormatted,
+      state: step2Completed ? 'completed' : step2Active ? 'current' : 'forecast',
+      style: step2Style,
+    },
+    step3: {
+      title: '3. Liberação',
+      badge: step3StatusLabel,
+      dateFormatted: clearanceDateFormatted,
+      state: step3Completed
+        ? 'completed'
+        : isDrawbackBlocked
+        ? 'stalled'
+        : step3Active
+        ? 'current'
+        : 'forecast',
+      style: step3Style,
+    },
+    step4: {
+      title: '4. Fábrica',
+      badge: step4StatusLabel,
+      dateFormatted: deliveryDateFormatted,
+      state: step4Completed ? 'completed' : step4Active ? 'current' : 'forecast',
+      style: step4Style,
+    },
+  };
 }
 
 // 4. Helper: Get ISO Week string ("YYYY-Www") for a Date
@@ -102,7 +407,6 @@ export function getIsoWeekString(date: Date): string {
 export function getWeekBounds(referenceDate: Date, weekOffset: number = 0): WeekBounds {
   const d = new Date(referenceDate.getFullYear(), referenceDate.getMonth(), referenceDate.getDate());
   const dayOfWeek = d.getDay(); // 0 (Sun) to 6 (Sat)
-  // Distance to Monday (if Sunday (0), go back 6 days; otherwise go back dayOfWeek - 1)
   const diffToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
 
   const startOfWeek = new Date(d);
@@ -134,9 +438,8 @@ export function getBoundsFromIsoWeek(isoWeekStr: string): WeekBounds | null {
   const week = parseInt(weekPart, 10);
   if (isNaN(year) || isNaN(week)) return null;
 
-  // Jan 4th is always in ISO Week 1
   const jan4 = new Date(year, 0, 4);
-  const dayOfWeek = jan4.getDay() || 7; // 1 (Mon) to 7 (Sun)
+  const dayOfWeek = jan4.getDay() || 7;
   const mondayWeek1 = new Date(jan4);
   mondayWeek1.setDate(jan4.getDate() - dayOfWeek + 1);
 
@@ -170,11 +473,11 @@ export function getDayOfWeekInfo(date: Date | null): {
       dayIndex: -1,
       dayName: 'DATA A CONFIRMAR',
       dayAbbr: 'A Conf.',
-      formattedDate: 'A Confirmar',
+      formattedDate: 'S/ Data',
     };
   }
 
-  const dayIndex = date.getDay(); // 0 = Dom, 1 = Seg, 2 = Ter, 3 = Qua, 4 = Qui, 5 = Sex, 6 = Sáb
+  const dayIndex = date.getDay();
   const names = [
     'DOMINGO',
     'SEGUNDA-FEIRA',
@@ -202,16 +505,23 @@ export function getProcessTargetDate(
   if (weekDateField === 'ETA_ONLY') {
     return parseDateSafe(proc.dataChegadaEfetiva || proc.eta);
   }
-  // 'DELIVERY_OR_ETA': Use Delivery date if available, fallback to ETA
-  return parseDateSafe(proc.dataEntregaMFX || proc.prazoEntregaMFX || proc.dataChegadaEfetiva || proc.eta);
+  // 'DELIVERY_OR_ETA': Use explicit Delivery date if available, else calculated delivery date, fallback to ETA
+  const explicitDel = parseDateSafe(proc.dataEntregaMFX || proc.prazoEntregaMFX);
+  if (explicitDel) return explicitDel;
+  const etaDt = parseDateSafe(proc.dataChegadaEfetiva || proc.eta);
+  if (etaDt) {
+    const isAir = proc.modal === 'AÉREO' || String(proc.modal || '').toUpperCase().includes('AER');
+    return addDaysToDate(etaDt, isAir ? 6 : 10);
+  }
+  return null;
 }
 
 // 9. Master Filter Options interface
 export interface FilterDeliveriesOptions {
   showDelivered: boolean; // MUST be false by default!
   weekMode: WeekMode;
-  customIsoWeek?: string; // e.g. "2026-W45"
-  weekDateField: WeekDateField; // 'DELIVERY_OR_ETA' | 'ETA_ONLY'
+  customIsoWeek?: string;
+  weekDateField: WeekDateField;
   referenceToday: Date;
   searchQuery?: string;
   projectFilter?: string;
@@ -237,7 +547,6 @@ export function filterDeliveries(
   const todayBounds = getWeekBounds(referenceToday, 0);
   const q = searchQuery.toLowerCase().trim();
 
-  // Determine current active week bounds
   let targetBounds: WeekBounds | null = null;
   if (weekMode === 'CURRENT_WEEK') {
     targetBounds = todayBounds;
@@ -253,8 +562,8 @@ export function filterDeliveries(
     .filter((proc) => {
       const delivered = isImportProcessDelivered(proc);
 
-      // RULE 1: Hide Delivered by default unless showDelivered flag is TRUE
-      if (!showDelivered && delivered) {
+      // RULE 1: Hide Delivered by default unless showDelivered flag is TRUE (or ENTREGUE pill explicitly clicked)
+      if (!showDelivered && delivered && activePill !== 'ENTREGUE') {
         return false;
       }
 
@@ -283,33 +592,17 @@ export function filterDeliveries(
 
       // Status Pill Filter
       if (activePill !== 'TODOS') {
-        const stage = proc.stageNumber ?? 3;
-        const raw = (proc.statusRawExcel || proc.status || '').toUpperCase();
+        const stepInfo = getProcess4StepTrackerInfo(proc);
 
         if (activePill === 'TRANSITO') {
           if (delivered) return false;
-          const inTransit = stage === 3 || raw.includes('TRANSITO') || raw.includes('AG. CHEGADA') || raw.includes('EMBARCADO');
-          if (!inTransit) return false;
+          if (stepInfo.numericStep !== 2) return false;
         } else if (activePill === 'PORTO') {
           if (delivered) return false;
-          const inPort =
-            stage === 4 ||
-            stage === 5 ||
-            raw.includes('PORTO') ||
-            raw.includes('AEROPORTO') ||
-            raw.includes('DESEMBARAÇO') ||
-            raw.includes('DESEMBARACO') ||
-            raw.includes('DRAWBACK');
-          if (!inPort) return false;
+          if (stepInfo.numericStep !== 3) return false;
         } else if (activePill === 'ROTA') {
           if (delivered) return false;
-          const inRoad =
-            stage === 6 ||
-            raw.includes('RODOVIARIO') ||
-            raw.includes('AG. ENTREGA') ||
-            raw.includes('CARREGADO') ||
-            raw.includes('LIBERADO');
-          if (!inRoad) return false;
+          if (stepInfo.numericStep !== 3.5) return false;
         } else if (activePill === 'ENTREGUE') {
           if (!delivered) return false;
         } else if (activePill === 'ATENCAO') {
@@ -322,7 +615,7 @@ export function filterDeliveries(
             proc.alertaEntregaAtrasada ||
             etaPassed ||
             deliveryPassed ||
-            proc.cargaParadaDrawback ||
+            stepInfo.isDrawbackBlocked ||
             proc.riskLevel === 'high'
           );
           if (!attention) return false;
@@ -337,13 +630,12 @@ export function filterDeliveries(
       const targetDateObj = getProcessTargetDate(proc, weekDateField);
 
       if (!targetDateObj || isNaN(targetDateObj.getTime())) {
-        return false; // No valid date to match the selected week
+        return false;
       }
 
       const t = targetDateObj.getTime();
 
       if (weekMode === 'OVERDUE') {
-        // Overdue = Target date is before Monday 00:00:00 of the reference week and NOT delivered
         return t < todayBounds.startOfWeek.getTime() && !delivered;
       }
 
@@ -383,15 +675,17 @@ export function exportWeekDeliveriesToCSV(
     'BL / AWB',
     'STATUS FUP (COL A)',
     'DIA DA SEMANA',
-    'DATA BASE PREVISTA',
-    'ETA PORTO',
-    'ENTREGA MFX',
+    '1. EMBARQUE (ETD)',
+    '2. CHEGADA (ETA)',
+    '3. LIBERACAO (DI/ADUANA)',
+    '4. FABRICA MFX (ENTREGA)',
     'DESPACHANTE / AGENTE',
   ];
 
   const rows = processes.map((p) => {
     const targetDate = getProcessTargetDate(p, weekDateField);
     const dayInfo = getDayOfWeekInfo(targetDate);
+    const stepInfo = getProcess4StepTrackerInfo(p);
     const item = p.itens[0];
 
     return [
@@ -407,9 +701,10 @@ export function exportWeekDeliveriesToCSV(
       `"${p.blAwb}"`,
       `"${(p.statusRawExcel || p.status).replace(/"/g, '""')}"`,
       `"${dayInfo.dayName}"`,
-      `"${dayInfo.formattedDate}"`,
-      `"${formatDateBR(parseDateSafe(p.dataChegadaEfetiva || p.eta))}"`,
-      `"${formatDateBR(parseDateSafe(p.dataEntregaMFX || p.prazoEntregaMFX))}"`,
+      `"${stepInfo.etdFormatted}"`,
+      `"${stepInfo.etaFormatted}"`,
+      `"${stepInfo.clearanceDateFormatted}"`,
+      `"${stepInfo.deliveryDateFormatted}"`,
       `"${p.despachante || p.agenteCarga || 'ÔMEGA'}"`,
     ].join(';');
   });

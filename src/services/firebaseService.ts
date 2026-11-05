@@ -150,6 +150,17 @@ export function subscribeToOnlineProcessos(
         const expectedChunks = typeof metaData.totalChunks === 'number' ? metaData.totalChunks : 999;
         onStatusChange?.(true);
 
+        if (metaData.totalProcesses === 0) {
+          onUpdate([], {
+            sourceFileName: metaData.sourceFileName || 'Base Limpa (Aguardando Upload XLSX)',
+            lastUpdatedTime: metaData.lastUpdatedTime,
+            updatedBy: metaData.updatedBy || 'Equipe MFX Comex',
+            totalProcesses: 0,
+            isOnline: true,
+          });
+          return;
+        }
+
         // Fetch chunked documents
         try {
           const chunksSnap = await getDocs(collection(db, 'mfx_fup_chunks'));
@@ -257,10 +268,9 @@ export function subscribeToOnlineProcessos(
 }
 
 /**
- * Chunked Upload Persistence to Firestore:
- * Sanitizes undefined properties, splits processos into chunks of 40 processes per document
- * (staying well under 1MB), and writes to mfx_fup_chunks + mfx_fup_meta/latest in an atomic writeBatch.
- * Also persists local backup in localStorage.
+ * Strict Full-Replace Chunked Upload Persistence to Firestore:
+ * First deletes any previous chunk documents in mfx_fup_chunks so zero leftover sample/demo
+ * or removed processes remain, then writes the exact current processos array in chunks of 40.
  */
 export async function publishToCloudFirestore(
   processos: ImportProcess[],
@@ -271,13 +281,24 @@ export async function publishToCloudFirestore(
   try {
     const cleanProcessos = sanitizeForFirestore(processos);
 
-    // 1. Cache immediately to localStorage for instant local resiliency
+    // 1. Overwrite localStorage cache immediately
     saveCachedProcessos(cleanProcessos, { sourceFileName, lastUpdatedTime });
 
-    // 2. Prepare chunking (40 items per chunk document to stay well within 1MB doc limits)
-    const CHUNK_SIZE = 40;
-    const totalChunks = Math.max(1, Math.ceil(cleanProcessos.length / CHUNK_SIZE));
     const batch = writeBatch(db);
+
+    // 2. Delete existing chunks so Firestore holds 100% and exclusively the new dataset
+    try {
+      const existingChunksSnap = await getDocs(collection(db, 'mfx_fup_chunks'));
+      existingChunksSnap.docs.forEach((docSnap) => {
+        batch.delete(docSnap.ref);
+      });
+    } catch (e) {
+      console.warn('Could not list existing chunks before overwrite:', e);
+    }
+
+    // 3. Prepare chunking (40 items per chunk document to stay well within 1MB doc limits)
+    const CHUNK_SIZE = 40;
+    const totalChunks = cleanProcessos.length > 0 ? Math.ceil(cleanProcessos.length / CHUNK_SIZE) : 0;
 
     for (let c = 0; c < totalChunks; c++) {
       const chunkItems = cleanProcessos.slice(c * CHUNK_SIZE, (c + 1) * CHUNK_SIZE);
@@ -290,7 +311,7 @@ export async function publishToCloudFirestore(
       });
     }
 
-    // 3. Write metadata document (triggers onSnapshot across all connected users & TVs)
+    // 4. Write metadata document (triggers onSnapshot across all connected users & TVs)
     const nowIso = new Date().toISOString();
     const metaRef = doc(db, 'mfx_fup_meta', 'latest');
     batch.set(metaRef, {
@@ -318,3 +339,26 @@ export async function publishToCloudFirestore(
     return { success: false, count: 0, error: info.error };
   }
 }
+
+/**
+ * Clear / Reset both LocalStorage and Cloud Firestore chunks so the user can start clean
+ * and upload their Excel sheet with zero leftover demo/cached processes.
+ */
+export async function clearAllCloudAndLocalData(): Promise<boolean> {
+  try {
+    localStorage.removeItem(LOCAL_STORAGE_KEY_PROCESSOS);
+    localStorage.removeItem(LOCAL_STORAGE_KEY_META);
+  } catch (e) {
+    console.warn('Error clearing localStorage:', e);
+  }
+
+  const nowStr = new Date().toLocaleString('pt-BR');
+  const res = await publishToCloudFirestore(
+    [],
+    'Base Limpa — Aguardando Upload XLSX',
+    nowStr,
+    'Reset Manual MFX'
+  );
+  return res.success;
+}
+

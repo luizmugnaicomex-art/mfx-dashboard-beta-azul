@@ -533,6 +533,9 @@ export function normalizeStatus(
   _embarque?: string
 ): string {
   const s = stripAccents(String(rawStatus || '').toUpperCase().trim());
+  if (s.includes('CANCELAD') || s.includes('CANCEL')) {
+    return 'Cancelado';
+  }
   const stage = getProcessStage(rawStatus);
 
   // Column A (STATUS) is the absolute source of truth. Never promote status based on forecast dates!
@@ -561,11 +564,17 @@ export function normalizeStatus(
 export function detectDateInconsistencies(
   stage: number,
   eta?: string,
-  prazoEntrega?: string
+  prazoEntrega?: string,
+  rawStatus?: string
 ): {
   alertaEtaVencido: boolean;
   alertaEntregaAtrasada: boolean;
 } {
+  const s = stripAccents(String(rawStatus || '').toUpperCase().trim());
+  if (s.includes('CANCELAD') || s.includes('CANCEL')) {
+    return { alertaEtaVencido: false, alertaEntregaAtrasada: false };
+  }
+
   const today = new Date().toISOString().slice(0, 10);
   const isIsoDate = (d?: string) => Boolean(d && /^\d{4}-\d{2}-\d{2}$/.test(d));
 
@@ -600,6 +609,14 @@ export function computeProcessRisk(p: Partial<ImportProcess>): {
   riskLevel: RiskLevel;
   riskReason: string;
 } {
+  const rawStatusText = stripAccents(String(p.statusRawExcel || p.status || '').toUpperCase().trim());
+  if (rawStatusText.includes('CANCELAD') || rawStatusText.includes('CANCEL') || p.status === 'Cancelado') {
+    return {
+      riskLevel: 'none',
+      riskReason: `Processo Cancelado (${p.statusRawExcel || p.status})`,
+    };
+  }
+
   const stage = p.stageNumber ?? getProcessStage(p.statusRawExcel || p.status || '');
 
   // Completed / Delivered ONLY when Column A status explicitly resolves to Stage 7 (Entregue MFX)
@@ -1129,7 +1146,8 @@ export function parseMfxExcelFile(
       const { alertaEtaVencido, alertaEntregaAtrasada } = detectDateInconsistencies(
         stageNumber,
         firstItem.eta,
-        forecastDeliveryDate
+        forecastDeliveryDate,
+        statusRawExcel
       );
 
       const beneficioRaw = String(
@@ -1663,7 +1681,8 @@ export function parseMfxExcelFile(
     const { alertaEtaVencido, alertaEntregaAtrasada } = detectDateInconsistencies(
       stageNumber,
       eta,
-      forecastEntregaMFX
+      forecastEntregaMFX,
+      statusRawExcel
     );
 
     const dataVencimentoInvoice = getCellDate(

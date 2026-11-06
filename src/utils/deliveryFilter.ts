@@ -42,6 +42,24 @@ export function isImportProcessDelivered(proc: ImportProcess): boolean {
   return false;
 }
 
+// Helper: Check if a process is Cancelled based strictly on Column A (STATUS)
+export function isProcessCancelled(statusRaw?: string): boolean {
+  const norm = (statusRaw || '')
+    .toUpperCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim();
+
+  return norm.includes('CANCELAD') || norm.includes('CANCEL');
+}
+
+// Check if an ImportProcess object is considered cancelled
+export function isImportProcessCancelled(proc: ImportProcess): boolean {
+  if (isProcessCancelled(proc.statusRawExcel)) return true;
+  if (isProcessCancelled(proc.status)) return true;
+  return false;
+}
+
 // 2. Helper: Parse date string safely into a Date object at noon (12:00:00)
 export function parseDateSafe(dateVal?: string | Date | null): Date | null {
   if (!dateVal) return null;
@@ -187,15 +205,19 @@ export function getProcess4StepTrackerInfo(proc: ImportProcess): Step4TrackerInf
   }
 
   // 2. Determine exact operational step from Column A (STATUS)
+  const isCancelled = isImportProcessCancelled(proc);
+
   const isWaitingArrival =
-    rawNorm.includes('AG. CHEGADA') ||
-    rawNorm.includes('AGUARDANDO CHEGADA') ||
-    rawNorm.includes('EM TRANSITO') ||
-    (rawNorm.includes('TRANSITO') && !rawNorm.includes('RODOVIARIO')) ||
-    rawNorm.includes('EMBARCAD');
+    !isCancelled &&
+    (rawNorm.includes('AG. CHEGADA') ||
+      rawNorm.includes('AGUARDANDO CHEGADA') ||
+      rawNorm.includes('EM TRANSITO') ||
+      (rawNorm.includes('TRANSITO') && !rawNorm.includes('RODOVIARIO')) ||
+      rawNorm.includes('EMBARCAD'));
 
   const isDrawbackBlocked =
     !delivered &&
+    !isCancelled &&
     (proc.cargaParadaDrawback ||
       rawNorm.includes('DRAWBACK') ||
       rawNorm.includes('PARADO') ||
@@ -206,6 +228,7 @@ export function getProcess4StepTrackerInfo(proc: ImportProcess): Step4TrackerInf
 
   const isCustomsKeyword =
     !isWaitingArrival &&
+    !isCancelled &&
     (isDrawbackBlocked ||
       rawNorm.includes('AG. DI') ||
       rawNorm.includes('AG. REGISTRO') ||
@@ -223,6 +246,7 @@ export function getProcess4StepTrackerInfo(proc: ImportProcess): Step4TrackerInf
 
   const isRoadDelivery =
     !delivered &&
+    !isCancelled &&
     (proc.stageNumber === 6 ||
       rawNorm.includes('RODOVIARIO') ||
       rawNorm.includes('AG. ENTREGA') ||
@@ -234,6 +258,7 @@ export function getProcess4StepTrackerInfo(proc: ImportProcess): Step4TrackerInf
 
   const isPreShipment =
     !delivered &&
+    !isCancelled &&
     !isRoadDelivery &&
     !isCustomsKeyword &&
     !isWaitingArrival &&
@@ -255,7 +280,9 @@ export function getProcess4StepTrackerInfo(proc: ImportProcess): Step4TrackerInf
   const etaInFutureWithoutEtd = Boolean(!etdDate && etaDate && etaDate.getTime() > now.getTime());
 
   let numericStep: 1 | 2 | 3 | 3.5 | 4 = 2;
-  if (delivered) {
+  if (isCancelled) {
+    numericStep = 1;
+  } else if (delivered) {
     numericStep = 4;
   } else if (isRoadDelivery) {
     numericStep = 3.5;
@@ -560,6 +587,11 @@ export function filterDeliveries(
 
   return allProcesses
     .filter((proc) => {
+      // RULE 0: Never show Cancelled processes on the Deliveries panel (prevents confusion)
+      if (isImportProcessCancelled(proc)) {
+        return false;
+      }
+
       const delivered = isImportProcessDelivered(proc);
 
       // RULE 1: Hide Delivered by default unless showDelivered flag is TRUE (or ENTREGUE pill explicitly clicked)

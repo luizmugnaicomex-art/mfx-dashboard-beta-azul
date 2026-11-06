@@ -1,6 +1,11 @@
 import React, { useState, useMemo } from 'react';
 import { ImportProcess, PedidoForecastRow } from '../types/mfx';
-import { isImportProcessDelivered, parseStrictDate, formatDateBR } from '../utils/deliveryFilter';
+import {
+  isImportProcessDelivered,
+  isImportProcessCancelled,
+  parseStrictDate,
+  formatDateBR,
+} from '../utils/deliveryFilter';
 
 interface SupplierCapexFollowupViewProps {
   processos: ImportProcess[];
@@ -83,6 +88,11 @@ export const SupplierCapexFollowupView: React.FC<SupplierCapexFollowupViewProps>
     const records: UnifiedPoRecord[] = [];
 
     processos.forEach((proc) => {
+      // Avoid showing cancelled processes on the supplier expediting & follow-up panel
+      if (isImportProcessCancelled(proc)) {
+        return;
+      }
+
       const rawStatus = proc.statusRawExcel || proc.status || 'AGUARDANDO EMBARQUE';
       const sNorm = stripAccentsUpper(rawStatus);
       const isDelivered = isImportProcessDelivered(proc);

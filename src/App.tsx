@@ -30,7 +30,7 @@ import {
   getCachedProcessos,
   getCachedMeta,
 } from './services/firebaseService';
-import { isImportProcessDelivered } from './utils/deliveryFilter';
+import { isImportProcessDelivered, isImportProcessCancelled } from './utils/deliveryFilter';
 
 const INITIAL_FILTERS: FilterState = {
   pos: [],
@@ -236,6 +236,7 @@ export default function App() {
       'No Porto/Aeroporto',
       'Desembaraçado',
       'Em Produção Fornecedor',
+      'Cancelado',
     ]);
     processos.forEach((p) => {
       if (p.status) set.add(p.status);
@@ -290,6 +291,12 @@ export default function App() {
     const selectedForwarders = f.agentes.filter((x) => !despOptions.includes(x));
 
     return processos.filter((p) => {
+      // RULE: Hide Cancelled by default to avoid confusing users on panels, unless user explicitly selected 'Cancelado' in status filter
+      const isCancelled = isImportProcessCancelled(p);
+      if (isCancelled && !f.status.includes('Cancelado')) {
+        return false;
+      }
+
       // RULE: Hide Delivered by default unless showDelivered flag is true or user explicitly selected 'Entregue MFX' in status filter
       const isDelivered = isImportProcessDelivered(p);
       if (!f.showDelivered && isDelivered && !f.status.includes('Entregue MFX')) {

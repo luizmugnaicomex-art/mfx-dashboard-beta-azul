@@ -6,6 +6,7 @@ import {
   getDayOfWeekInfo,
   getProcessTargetDate,
   isImportProcessDelivered,
+  isImportProcessCancelled,
   formatDateBR,
   getProcess4StepTrackerInfo,
 } from '../utils/deliveryFilter';
@@ -108,6 +109,16 @@ export const ComexTvSlidePanel: React.FC<ComexTvSlidePanelProps> = ({
 
   // Helper: Identify if a process has a critical or operational pending issue
   const getProcessPendingStatus = (p: ImportProcess) => {
+    if (isImportProcessCancelled(p)) {
+      return {
+        isPending: false,
+        isCritical: false,
+        badge: '❌ CANCELADO',
+        reason: 'Processo / Pedido Cancelado',
+        colorClass: 'bg-gray-500/20 text-gray-400 border-gray-600',
+      };
+    }
+
     const delivered = isImportProcessDelivered(p);
     if (delivered) {
       return {
@@ -174,7 +185,7 @@ export const ComexTvSlidePanel: React.FC<ComexTvSlidePanelProps> = ({
 
   // Lists of Pending & Critical Processes
   const pendingDeliveries = useMemo(() => {
-    return filteredDeliveries.filter((p) => !isImportProcessDelivered(p));
+    return filteredDeliveries.filter((p) => !isImportProcessDelivered(p) && !isImportProcessCancelled(p));
   }, [filteredDeliveries]);
 
   const criticalDeliveries = useMemo(() => {

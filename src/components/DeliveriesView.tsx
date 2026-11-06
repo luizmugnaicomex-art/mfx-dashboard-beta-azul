@@ -10,6 +10,7 @@ import {
   getProcessTargetDate,
   filterDeliveries,
   isImportProcessDelivered,
+  isImportProcessCancelled,
   exportWeekDeliveriesToCSV,
   formatDateBR,
   getProcess4StepTrackerInfo,
@@ -40,6 +41,11 @@ export const DeliveriesView: React.FC<DeliveriesViewProps> = ({
   // Reference date: Current date (system date)
   const referenceToday = useMemo(() => new Date(), []);
   const todayIsoWeek = useMemo(() => getIsoWeekString(referenceToday), [referenceToday]);
+
+  // Active non-cancelled processes: avoid displaying cancelled orders on the delivery panel
+  const activeProcessos = useMemo(() => {
+    return processos.filter((p) => !isImportProcessCancelled(p));
+  }, [processos]);
 
   // Filter States
   const [showDelivered, setShowDelivered] = useState<boolean>(false); // MUST be false by default!
@@ -116,7 +122,7 @@ export const DeliveriesView: React.FC<DeliveriesViewProps> = ({
       });
     });
 
-    processos.forEach((p) => {
+    activeProcessos.forEach((p) => {
       const dt = getProcessTargetDate(p, weekDateField);
       if (dt) {
         const iso = getIsoWeekString(dt);
@@ -137,7 +143,7 @@ export const DeliveriesView: React.FC<DeliveriesViewProps> = ({
     });
 
     return Array.from(weekMap.values()).sort((a, b) => a.iso.localeCompare(b.iso));
-  }, [processos, weekDateField, currentWeekBounds, nextWeekBounds, plus2WeeksBounds]);
+  }, [activeProcessos, weekDateField, currentWeekBounds, nextWeekBounds, plus2WeeksBounds]);
 
   // Week Navigator: Previous / Next Week
   const handleShiftWeek = (delta: number) => {
@@ -159,14 +165,14 @@ export const DeliveriesView: React.FC<DeliveriesViewProps> = ({
 
   // Total delivered items in the dataset
   const totalDeliveredCount = useMemo(() => {
-    return processos.filter(isImportProcessDelivered).length;
-  }, [processos]);
+    return activeProcessos.filter(isImportProcessDelivered).length;
+  }, [activeProcessos]);
 
   // Count delivered items that would match the current filters but are currently hidden
   const hiddenDeliveredCount = useMemo(() => {
     if (showDelivered) return 0;
     // Filter with showDelivered = true to find what is hidden
-    const withDelivered = filterDeliveries(processos, {
+    const withDelivered = filterDeliveries(activeProcessos, {
       showDelivered: true,
       weekMode,
       customIsoWeek,
@@ -178,7 +184,7 @@ export const DeliveriesView: React.FC<DeliveriesViewProps> = ({
     });
     return withDelivered.filter(isImportProcessDelivered).length;
   }, [
-    processos,
+    activeProcessos,
     showDelivered,
     weekMode,
     customIsoWeek,
@@ -191,7 +197,7 @@ export const DeliveriesView: React.FC<DeliveriesViewProps> = ({
 
   // Master Filtered Deliveries List
   const filteredDeliveries = useMemo(() => {
-    return filterDeliveries(processos, {
+    return filterDeliveries(activeProcessos, {
       showDelivered,
       weekMode,
       customIsoWeek,
@@ -202,7 +208,7 @@ export const DeliveriesView: React.FC<DeliveriesViewProps> = ({
       activePill,
     });
   }, [
-    processos,
+    activeProcessos,
     showDelivered,
     weekMode,
     customIsoWeek,
@@ -250,7 +256,7 @@ export const DeliveriesView: React.FC<DeliveriesViewProps> = ({
 
   // Pill live counts (Calculated with showDelivered respected)
   const pillCounts = useMemo(() => {
-    const baseList = filterDeliveries(processos, {
+    const baseList = filterDeliveries(activeProcessos, {
       showDelivered,
       weekMode,
       customIsoWeek,
@@ -308,7 +314,7 @@ export const DeliveriesView: React.FC<DeliveriesViewProps> = ({
       ATENCAO: baseList.filter(isAttention).length,
     };
   }, [
-    processos,
+    activeProcessos,
     showDelivered,
     weekMode,
     customIsoWeek,
@@ -321,11 +327,11 @@ export const DeliveriesView: React.FC<DeliveriesViewProps> = ({
   // Projects list
   const projectsList = useMemo(() => {
     const set = new Set<string>();
-    processos.forEach((p) => {
+    activeProcessos.forEach((p) => {
       if (p.projeto) set.add(p.projeto);
     });
     return Array.from(set);
-  }, [processos]);
+  }, [activeProcessos]);
 
   // Handler for Exporting Weekly Schedule
   const handleExportWeek = () => {
@@ -493,7 +499,7 @@ export const DeliveriesView: React.FC<DeliveriesViewProps> = ({
                 onChange={(e) => setSelectedProject(e.target.value)}
                 className="w-full px-4 py-3 text-xs sm:text-sm bg-white/15 text-white border border-white/20 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400"
               >
-                <option value="ALL" className="text-gray-900">Todos os Projetos ({processos.length})</option>
+                <option value="ALL" className="text-gray-900">Todos os Projetos ({activeProcessos.length})</option>
                 {projectsList.map((proj) => (
                   <option key={proj} value={proj} className="text-gray-900">
                     Projeto: {proj}
@@ -1124,7 +1130,7 @@ export const DeliveriesView: React.FC<DeliveriesViewProps> = ({
         isOpen={isSlidePanelOpen}
         onClose={() => setIsSlidePanelOpen(false)}
         filteredDeliveries={filteredDeliveries}
-        allProcessos={processos}
+        allProcessos={activeProcessos}
         weekMode={weekMode}
         setWeekMode={setWeekMode}
         weekDateField={weekDateField}

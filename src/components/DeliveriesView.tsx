@@ -25,6 +25,8 @@ interface DeliveriesViewProps {
   onTogglePresentationMode?: () => void;
   lastUpdatedTime?: string;
   sourceFileName?: string;
+  isTvModeOpen?: boolean;
+  onToggleTvMode?: (open: boolean) => void;
 }
 
 type DeliveryPill = 'TODOS' | 'TRANSITO' | 'PORTO' | 'ROTA' | 'ENTREGUE' | 'ATENCAO';
@@ -37,6 +39,8 @@ export const DeliveriesView: React.FC<DeliveriesViewProps> = ({
   onTogglePresentationMode,
   lastUpdatedTime,
   sourceFileName,
+  isTvModeOpen,
+  onToggleTvMode,
 }) => {
   // Reference date: Current date (system date)
   const referenceToday = useMemo(() => new Date(), []);
@@ -55,7 +59,16 @@ export const DeliveriesView: React.FC<DeliveriesViewProps> = ({
   const [filterText, setFilterText] = useState('');
   const [activePill, setActivePill] = useState<DeliveryPill>('TODOS');
   const [selectedProject, setSelectedProject] = useState<string>('ALL');
-  const [isSlidePanelOpen, setIsSlidePanelOpen] = useState<boolean>(false);
+
+  // TV Mode Slide Panel state (Defaults to TRUE so users see TV Mode first upon opening)
+  const [internalTvModeOpen, setInternalTvModeOpen] = useState<boolean>(true);
+  const isSlidePanelOpen = isTvModeOpen !== undefined ? isTvModeOpen : internalTvModeOpen;
+  const setIsSlidePanelOpen = (open: boolean) => {
+    setInternalTvModeOpen(open);
+    if (onToggleTvMode) {
+      onToggleTvMode(open);
+    }
+  };
 
   // Pre-calculate Quick Week Labels for Buttons
   const currentWeekBounds = useMemo(() => getWeekBounds(referenceToday, 0), [referenceToday]);

@@ -113,6 +113,8 @@ export default function App() {
   const [isOnlineConnected, setIsOnlineConnected] = useState<boolean>(true);
   const [isSyncingCloud, setIsSyncingCloud] = useState<boolean>(false);
   const [presentationMode, setPresentationMode] = useState<boolean>(false);
+  // TV Mode is open by default on first load so users immediately see the operational TV panel
+  const [isTvModeOpen, setIsTvModeOpen] = useState<boolean>(true);
 
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
   const [filters, setFilters] = useState<FilterState>(INITIAL_FILTERS);
@@ -931,6 +933,21 @@ export default function App() {
               </button>
             )}
 
+            {/* Modo TV Sala Comex Button - Quick Access anytime */}
+            <button
+              id="open-tv-mode-btn"
+              type="button"
+              onClick={() => {
+                setActiveTab(0);
+                setIsTvModeOpen(true);
+              }}
+              title="Abrir Painel TV Sala de Operações Comex (Slide / Working Panel)"
+              className="bg-gradient-to-r from-blue-700 via-indigo-700 to-cyan-600 hover:from-blue-600 hover:to-cyan-500 text-white text-xs font-black px-3.5 py-2 rounded-lg shadow-sm transition-all flex items-center gap-1.5 whitespace-nowrap cursor-pointer border border-cyan-400/40 ring-1 ring-cyan-400/20"
+            >
+              <i className="fas fa-tv text-cyan-300 animate-pulse"></i>
+              <span>📺 Modo TV (Sala Comex)</span>
+            </button>
+
             {/* Exportar Excel Button */}
             <button
               id="export-excel-btn"
@@ -1161,6 +1178,8 @@ export default function App() {
             onTogglePresentationMode={() => setPresentationMode(!presentationMode)}
             lastUpdatedTime={lastUpdatedTime}
             sourceFileName={sourceFileName}
+            isTvModeOpen={isTvModeOpen}
+            onToggleTvMode={setIsTvModeOpen}
           />
         ) : activeTab === 7 ? (
           <SupplierCapexFollowupView

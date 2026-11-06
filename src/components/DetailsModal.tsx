@@ -66,7 +66,7 @@ export const DetailsModal: React.FC<DetailsModalProps> = ({
     return (
       <div
         id="details-modal"
-        className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 overflow-y-auto"
+        className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 overflow-y-auto"
         onClick={onClose}
       >
         <div
@@ -430,7 +430,7 @@ export const DetailsModal: React.FC<DetailsModalProps> = ({
   return (
     <div
       id="details-modal"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 overflow-y-auto"
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 overflow-y-auto"
       onClick={onClose}
     >
       <div
